@@ -146,6 +146,16 @@
       images: images.length > 0 ? images : undefined
     };
 
+    const sync = await api(`/api/threads/${activeThreadId}/sync-context`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!sync || typeof sync.current_seq !== "number" || !sync.reply_token) {
+      return;
+    }
+    payload.expected_last_seq = sync.current_seq;
+    payload.reply_token = sync.reply_token;
+
     const m = await api(`/api/threads/${activeThreadId}/messages`, {
       method: "POST",
       body: JSON.stringify(payload),

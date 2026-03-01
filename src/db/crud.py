@@ -13,8 +13,15 @@ from typing import Optional
 import aiosqlite
 
 from src.db.models import Thread, Message, AgentInfo, Event
-from src.config import AGENT_HEARTBEAT_TIMEOUT, RATE_LIMIT_MSG_PER_MINUTE, RATE_LIMIT_ENABLED
-from src.config import AGENT_HEARTBEAT_TIMEOUT, CONTENT_FILTER_ENABLED
+from src.config import (
+    AGENT_HEARTBEAT_TIMEOUT,
+    RATE_LIMIT_MSG_PER_MINUTE,
+    RATE_LIMIT_ENABLED,
+    CONTENT_FILTER_ENABLED,
+    REPLY_TOKEN_LEASE_SECONDS,
+    SEQ_TOLERANCE,
+    SEQ_MISMATCH_MAX_MESSAGES,
+)
 from src.content_filter import check_content, ContentFilterError
 
 logger = logging.getLogger(__name__)
@@ -28,6 +35,46 @@ class RateLimitExceeded(Exception):
         self.retry_after = retry_after
         self.scope = scope
         super().__init__(f"Rate limit exceeded: {limit} messages/{window}s")
+
+
+class MissingSyncFieldsError(Exception):
+    """Raised when strict sync fields are absent from msg_post."""
+
+    def __init__(self, missing_fields: list[str]) -> None:
+        self.missing_fields = missing_fields
+        super().__init__(f"Missing required sync fields: {', '.join(missing_fields)}")
+
+
+class SeqMismatchError(Exception):
+    """Raised when too many unseen messages exist since expected seq."""
+
+    def __init__(self, expected_last_seq: int, current_seq: int, new_messages: list[dict]) -> None:
+        self.expected_last_seq = expected_last_seq
+        self.current_seq = current_seq
+        self.new_messages = new_messages
+        super().__init__(
+            f"SEQ_MISMATCH: expected_last_seq={expected_last_seq}, current_seq={current_seq}"
+        )
+
+
+class ReplyTokenInvalidError(Exception):
+    def __init__(self, token: str) -> None:
+        self.token = token
+        super().__init__("TOKEN_INVALID")
+
+
+class ReplyTokenExpiredError(Exception):
+    def __init__(self, token: str, expires_at: str) -> None:
+        self.token = token
+        self.expires_at = expires_at
+        super().__init__("TOKEN_EXPIRED")
+
+
+class ReplyTokenReplayError(Exception):
+    def __init__(self, token: str, consumed_at: Optional[str]) -> None:
+        self.token = token
+        self.consumed_at = consumed_at
+        super().__init__("TOKEN_REPLAY")
 
 
 GLOBAL_SYSTEM_PROMPT = """**SYSTEM DIRECTIVE: ACTIVE AGENT COLLABORATION WORKSPACE**
@@ -233,6 +280,69 @@ async def thread_latest_seq(db: aiosqlite.Connection, thread_id: str) -> int:
     return row["max_seq"] or 0
 
 
+async def _expire_old_reply_tokens(db: aiosqlite.Connection) -> None:
+    now = _now()
+    await db.execute(
+        "UPDATE reply_tokens SET status = 'expired' "
+        "WHERE status = 'issued' AND expires_at <= ?",
+        (now,),
+    )
+    await db.commit()
+
+
+async def issue_reply_token(
+    db: aiosqlite.Connection,
+    thread_id: str,
+    agent_id: Optional[str] = None,
+) -> dict:
+    """Issue a short-lived reply token bound to a thread (and optionally an agent)."""
+    await _expire_old_reply_tokens(db)
+    token = secrets.token_urlsafe(24)
+    issued_at = _now()
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=REPLY_TOKEN_LEASE_SECONDS)).isoformat()
+    await db.execute(
+        "INSERT INTO reply_tokens (token, thread_id, agent_id, issued_at, expires_at, consumed_at, status) "
+        "VALUES (?, ?, ?, ?, ?, NULL, 'issued')",
+        (token, thread_id, agent_id, issued_at, expires_at),
+    )
+    await db.commit()
+    current_seq = await thread_latest_seq(db, thread_id)
+    return {
+        "reply_token": token,
+        "current_seq": current_seq,
+        "reply_window": {
+            "expires_at": expires_at,
+            "max_new_messages": SEQ_TOLERANCE,
+        },
+    }
+
+
+async def _get_new_messages_since(
+    db: aiosqlite.Connection,
+    thread_id: str,
+    expected_last_seq: int,
+    limit: int = SEQ_MISMATCH_MAX_MESSAGES,
+) -> list[dict]:
+    msgs = await msg_list(
+        db,
+        thread_id=thread_id,
+        after_seq=expected_last_seq,
+        limit=limit,
+        include_system_prompt=False,
+    )
+    return [
+        {
+            "msg_id": m.id,
+            "seq": m.seq,
+            "author": m.author,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in msgs
+    ]
+
+
 def _row_to_thread(row: aiosqlite.Row) -> Thread:
     system_prompt = row["system_prompt"] if "system_prompt" in row.keys() else None
     updated_at = _parse_dt(row["updated_at"]) if "updated_at" in row.keys() and row["updated_at"] else None
@@ -258,6 +368,8 @@ async def msg_post(
     thread_id: str,
     author: str,
     content: str,
+    expected_last_seq: int,
+    reply_token: str,
     role: str = "user",
     metadata: Optional[dict] = None,
 ) -> Message:
@@ -310,6 +422,41 @@ async def msg_post(
                 scope=scope,
             )
 
+    missing_fields: list[str] = []
+    if expected_last_seq is None:
+        missing_fields.append("expected_last_seq")
+    if not reply_token:
+        missing_fields.append("reply_token")
+    if missing_fields:
+        raise MissingSyncFieldsError(missing_fields)
+
+    await _expire_old_reply_tokens(db)
+    async with db.execute(
+        "SELECT token, thread_id, agent_id, expires_at, consumed_at, status "
+        "FROM reply_tokens WHERE token = ?",
+        (reply_token,),
+    ) as cur:
+        token_row = await cur.fetchone()
+
+    if token_row is None:
+        raise ReplyTokenInvalidError(reply_token)
+    if token_row["thread_id"] != thread_id:
+        raise ReplyTokenInvalidError(reply_token)
+    if token_row["status"] == "consumed":
+        raise ReplyTokenReplayError(reply_token, token_row["consumed_at"])
+    if token_row["status"] == "expired":
+        raise ReplyTokenExpiredError(reply_token, token_row["expires_at"])
+
+    token_agent_id = token_row["agent_id"]
+    if token_agent_id and author_id and token_agent_id != author_id:
+        raise ReplyTokenInvalidError(reply_token)
+
+    current_seq = await thread_latest_seq(db, thread_id)
+    new_messages_count = current_seq - expected_last_seq
+    if new_messages_count > SEQ_TOLERANCE:
+        new_messages = await _get_new_messages_since(db, thread_id, expected_last_seq)
+        raise SeqMismatchError(expected_last_seq, current_seq, new_messages)
+
     mid = str(uuid.uuid4())
     now = _now()
     seq = await next_seq(db)
@@ -323,6 +470,22 @@ async def msg_post(
         "UPDATE threads SET updated_at = ? WHERE id = ?",
         (now, thread_id),
     )
+    async with db.execute(
+        "UPDATE reply_tokens SET status = 'consumed', consumed_at = ? "
+        "WHERE token = ? AND status = 'issued'",
+        (now, reply_token),
+    ) as cur:
+        consumed = cur.rowcount
+    if consumed == 0:
+        await db.rollback()
+        async with db.execute(
+            "SELECT consumed_at FROM reply_tokens WHERE token = ?",
+            (reply_token,),
+        ) as cur:
+            row = await cur.fetchone()
+        consumed_at = row["consumed_at"] if row else None
+        raise ReplyTokenReplayError(reply_token, consumed_at)
+
     await db.commit()
     if author_id:
         await agent_msg_post(db, author_id)

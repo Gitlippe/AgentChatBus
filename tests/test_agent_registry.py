@@ -5,6 +5,20 @@ from src.db import crud
 from src.db.database import init_schema
 
 
+async def _post_message(db, thread_id: str, author: str, content: str, role: str = "user", metadata: dict | None = None):
+    sync = await crud.issue_reply_token(db, thread_id=thread_id)
+    return await crud.msg_post(
+        db,
+        thread_id=thread_id,
+        author=author,
+        content=content,
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+        role=role,
+        metadata=metadata,
+    )
+
+
 @pytest.mark.asyncio
 async def test_agent_register_supports_display_name_and_resume_updates_activity():
     db = await aiosqlite.connect(":memory:")
@@ -49,13 +63,7 @@ async def test_agent_wait_and_post_activity_tracking():
     refreshed = (await crud.agent_list(db))[0]
     assert refreshed.last_activity == "msg_wait"
 
-    await crud.msg_post(
-        db,
-        thread_id=t.id,
-        author=agent.id,
-        content="hello",
-        role="assistant",
-    )
+    await _post_message(db, thread_id=t.id, author=agent.id, content="hello", role="assistant")
 
     refreshed2 = (await crud.agent_list(db))[0]
     assert refreshed2.last_activity == "msg_post"

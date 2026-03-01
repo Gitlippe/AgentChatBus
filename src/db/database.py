@@ -151,6 +151,24 @@ async def init_schema(db: aiosqlite.Connection) -> None:
             ON messages(thread_id, seq);
 
         -- ----------------------------------------------------------------
+        -- Reply token lease: mandatory sync token for msg_post in strict mode
+        -- ----------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS reply_tokens (
+            token       TEXT PRIMARY KEY,
+            thread_id   TEXT NOT NULL REFERENCES threads(id),
+            agent_id    TEXT,
+            issued_at   TEXT NOT NULL,
+            expires_at  TEXT NOT NULL,
+            consumed_at TEXT,
+            status      TEXT NOT NULL CHECK (status IN ('issued', 'consumed', 'expired'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reply_tokens_thread_status
+            ON reply_tokens(thread_id, status);
+        CREATE INDEX IF NOT EXISTS idx_reply_tokens_expires_at
+            ON reply_tokens(expires_at);
+
+        -- ----------------------------------------------------------------
         -- Sequence counter: single-row table for thread-safe seq increment
         -- ----------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS seq_counter (

@@ -82,12 +82,15 @@ async def test_legacy_schema_adds_required_columns_for_current_crud(tmp_path):
     # Exercise the CRUD paths that would have failed without these columns.
     t = await crud.thread_create(db, "legacy-required-columns")
     agent = await crud.agent_register(db, ide="CLI", model="X", display_name="Alpha")
+    sync = await crud.issue_reply_token(db, thread_id=t.id, agent_id=agent.id)
 
     await crud.msg_post(
         db,
         thread_id=t.id,
         author=agent.id,
         content="hello",
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
         role="assistant",
     )
 

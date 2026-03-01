@@ -13,8 +13,6 @@ import src.db.database as dbmod
 # Use an isolated test DB for all rate-limit unit tests
 os.environ["AGENTCHATBUS_DB"] = "data/test_rl_unit.db"
 
-from src.db.crud import RateLimitExceeded
-
 
 # NOTE: Per-test DB cleanup is performed explicitly in each async test's
 # finally block to avoid autouse async fixtures that interfere with sync tests.
@@ -37,10 +35,23 @@ async def _get_db():
         pass
     db = await dbmod.get_db()
     # Clean up any existing test data from rate limit tests
+    await db.execute("DELETE FROM reply_tokens WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'rl-%')")
     await db.execute("DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'rl-%')")
     await db.execute("DELETE FROM threads WHERE topic LIKE 'rl-%'")
     await db.commit()
     return dbmod._db
+
+
+async def _post_message(db, thread_id: str, author: str, content: str):
+    sync = await crud_mod.issue_reply_token(db, thread_id=thread_id)
+    return await crud_mod.msg_post(
+        db,
+        thread_id,
+        author,
+        content,
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+    )
 
 
 def _patch_rate_limit(limit: int):
@@ -63,23 +74,23 @@ def _restore_rate_limit(orig_enabled, orig_limit):
 
 class TestRateLimitExceeded:
     def test_attributes(self):
-        exc = RateLimitExceeded(limit=30, window=60, retry_after=60, scope="author_id")
+        exc = crud_mod.RateLimitExceeded(limit=30, window=60, retry_after=60, scope="author_id")
         assert exc.limit == 30
         assert exc.window == 60
         assert exc.retry_after == 60
         assert exc.scope == "author_id"
 
     def test_str_contains_limit_and_window(self):
-        exc = RateLimitExceeded(limit=5, window=60, retry_after=60, scope="author")
+        exc = crud_mod.RateLimitExceeded(limit=5, window=60, retry_after=60, scope="author")
         assert "5" in str(exc)
         assert "60" in str(exc)
 
     def test_scope_author_id(self):
-        exc = RateLimitExceeded(limit=10, window=60, retry_after=30, scope="author_id")
+        exc = crud_mod.RateLimitExceeded(limit=10, window=60, retry_after=30, scope="author_id")
         assert exc.scope == "author_id"
 
     def test_scope_author_fallback(self):
-        exc = RateLimitExceeded(limit=10, window=60, retry_after=30, scope="author")
+        exc = crud_mod.RateLimitExceeded(limit=10, window=60, retry_after=30, scope="author")
         assert exc.scope == "author"
 
 
@@ -96,7 +107,7 @@ async def test_rate_limit_allows_within_limit():
         db = await _get_db()
         thread = await crud_mod.thread_create(db, "rl-test-allow")
         for i in range(3):
-            msg = await crud_mod.msg_post(db, thread.id, "rl-allow-user", f"Message {i}")
+            msg = await _post_message(db, thread.id, "rl-allow-user", f"Message {i}")
             assert msg.seq > 0
     finally:
         _restore_rate_limit(*orig)
@@ -114,9 +125,9 @@ async def test_rate_limit_blocks_on_exceed():
         db = await _get_db()
         thread = await crud_mod.thread_create(db, "rl-test-exceed")
         for i in range(3):
-            await crud_mod.msg_post(db, thread.id, "rl-exceed-user", f"Msg {i}")
-        with pytest.raises(RateLimitExceeded) as exc_info:
-            await crud_mod.msg_post(db, thread.id, "rl-exceed-user", "One too many")
+            await _post_message(db, thread.id, "rl-exceed-user", f"Msg {i}")
+        with pytest.raises(crud_mod.RateLimitExceeded) as exc_info:
+            await _post_message(db, thread.id, "rl-exceed-user", "One too many")
         assert exc_info.value.limit == 3
         assert exc_info.value.window == 60
         assert exc_info.value.retry_after > 0
@@ -136,11 +147,11 @@ async def test_rate_limit_scopes_per_author():
         db = await _get_db()
         thread = await crud_mod.thread_create(db, "rl-test-scope")
         for i in range(3):
-            await crud_mod.msg_post(db, thread.id, "rl-scope-A", f"Msg {i}")
-        with pytest.raises(RateLimitExceeded):
-            await crud_mod.msg_post(db, thread.id, "rl-scope-A", "Blocked!")
+            await _post_message(db, thread.id, "rl-scope-A", f"Msg {i}")
+        with pytest.raises(crud_mod.RateLimitExceeded):
+            await _post_message(db, thread.id, "rl-scope-A", "Blocked!")
         # Author B must have their own independent counter
-        msg = await crud_mod.msg_post(db, thread.id, "rl-scope-B", "Author B works")
+        msg = await _post_message(db, thread.id, "rl-scope-B", "Author B works")
         assert msg.seq > 0
     finally:
         _restore_rate_limit(*orig)
@@ -157,7 +168,7 @@ async def test_rate_limit_normal_single_message():
     try:
         db = await _get_db()
         thread = await crud_mod.thread_create(db, "rl-test-single")
-        msg = await crud_mod.msg_post(db, thread.id, "rl-single-user", "Normal message")
+        msg = await _post_message(db, thread.id, "rl-single-user", "Normal message")
         assert msg.seq > 0
     finally:
         _restore_rate_limit(*orig)
@@ -175,7 +186,7 @@ async def test_rate_limit_zero_disables():
         db = await _get_db()
         thread = await crud_mod.thread_create(db, "rl-test-disabled")
         for i in range(10):
-            msg = await crud_mod.msg_post(db, thread.id, "rl-disabled-user", f"Msg {i}")
+            msg = await _post_message(db, thread.id, "rl-disabled-user", f"Msg {i}")
             assert msg.seq > 0
     finally:
         _restore_rate_limit(*orig)

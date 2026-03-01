@@ -28,6 +28,7 @@ async def db_context():
     db = await dbmod.get_db()
     try:
         # Clean up any existing test data
+        await db.execute("DELETE FROM reply_tokens WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'timeout-%')")
         await db.execute("DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'timeout-%')")
         await db.execute("DELETE FROM threads WHERE topic LIKE 'timeout-%'")
         await db.commit()
@@ -73,6 +74,19 @@ async def _get_db():
     return dbmod._db
 
 
+async def _post_message(db, thread_id: str, author: str, content: str, role: str = "user"):
+    sync = await crud_mod.issue_reply_token(db, thread_id=thread_id)
+    return await crud_mod.msg_post(
+        db,
+        thread_id,
+        author,
+        content,
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+        role=role,
+    )
+
+
 # ─────────────────────────────────────────────
 # Tests
 # ─────────────────────────────────────────────
@@ -102,7 +116,7 @@ async def test_timeout_sweep_closes_stale_thread_with_old_messages():
     """A thread whose last message is older than timeout must be closed."""
     async with db_context() as db:
         thread = await crud_mod.thread_create(db, "timeout-stale-with-msg")
-        await crud_mod.msg_post(db, thread.id, "agent", "Old message")
+        await _post_message(db, thread.id, "agent", "Old message")
         await _backdate_message(db, thread.id, minutes_ago=61)
         await _backdate_thread(db, thread.id, minutes_ago=61)
 
@@ -116,7 +130,7 @@ async def test_timeout_sweep_keeps_active_thread():
     """A recently-active thread must NOT be closed by the sweep."""
     async with db_context() as db:
         thread = await crud_mod.thread_create(db, "timeout-active-thread")
-        await crud_mod.msg_post(db, thread.id, "agent", "Recent message")
+        await _post_message(db, thread.id, "agent", "Recent message")
         # No backdating — thread is fresh
 
         closed = await crud_mod.thread_timeout_sweep(db, timeout_minutes=60)
@@ -146,7 +160,7 @@ async def test_timeout_sweep_independent_of_other_threads():
         active = await crud_mod.thread_create(db, "timeout-mix-active")
 
         await _backdate_thread(db, stale.id, minutes_ago=61)
-        await crud_mod.msg_post(db, active.id, "agent", "Fresh message")
+        await _post_message(db, active.id, "agent", "Fresh message")
 
         closed = await crud_mod.thread_timeout_sweep(db, timeout_minutes=60)
         assert stale.id in closed

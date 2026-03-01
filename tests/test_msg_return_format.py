@@ -10,6 +10,20 @@ from src.db.database import init_schema
 from src.tools.dispatch import handle_msg_list
 
 
+async def _post_message(db, thread_id: str, author: str, content: str, role: str = "user", metadata: dict | None = None):
+    sync = await crud.issue_reply_token(db, thread_id=thread_id)
+    return await crud.msg_post(
+        db,
+        thread_id=thread_id,
+        author=author,
+        content=content,
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+        role=role,
+        metadata=metadata,
+    )
+
+
 async def _make_db() -> aiosqlite.Connection:
     db = await aiosqlite.connect(":memory:")
     db.row_factory = aiosqlite.Row
@@ -22,7 +36,7 @@ async def test_msg_list_default_json_compatible():
     db = await _make_db()
     try:
         thread = await crud.thread_create(db, topic="fmt-json-default")
-        await crud.msg_post(
+        await _post_message(
             db,
             thread_id=thread.id,
             author="human",
@@ -62,7 +76,7 @@ async def test_msg_list_blocks_can_return_imagecontent():
     db = await _make_db()
     try:
         thread = await crud.thread_create(db, topic="fmt-blocks")
-        await crud.msg_post(
+        await _post_message(
             db,
             thread_id=thread.id,
             author="human",
@@ -97,7 +111,7 @@ async def test_msg_list_blocks_strips_data_url_prefix_and_inferrs_mime():
     db = await _make_db()
     try:
         thread = await crud.thread_create(db, topic="fmt-blocks-dataurl")
-        await crud.msg_post(
+        await _post_message(
             db,
             thread_id=thread.id,
             author="human",
