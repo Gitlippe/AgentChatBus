@@ -304,6 +304,17 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
 
     logger.info(f"[msg_wait] explicit: agent_id={explicit_agent_id}, connection: agent_id={connection_agent_id}, final_agent_id={agent_id}, for_agent={for_agent}")
 
+    # Heartbeat interval: refresh every 20 seconds to stay online.
+    HEARTBEAT_INTERVAL = 20.0
+
+    async def _refresh_heartbeat() -> None:
+        if agent_id and token:
+            try:
+                await crud.agent_msg_wait(db, agent_id, token)
+                logger.debug(f"[msg_wait] heartbeat refreshed for agent_id={agent_id}")
+            except Exception as e:
+                logger.warning(f"[msg_wait] Failed to refresh heartbeat for {agent_id}: {e}")
+
     if agent_id and token:
         try:
             result = await crud.agent_msg_wait(db, agent_id, token)
@@ -314,6 +325,7 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
         logger.warning(f"[msg_wait] No credentials available: agent_id={agent_id}, token={'***' if token else None}")
 
     async def _poll():
+        last_heartbeat = asyncio.get_event_loop().time()
         while True:
             msgs = await crud.msg_list(db, thread_id, after_seq=after_seq, include_system_prompt=False)
             if msgs:
@@ -323,6 +335,12 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
                         return filtered
                 else:
                     return msgs
+
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+                await _refresh_heartbeat()
+                last_heartbeat = now
+
             await asyncio.sleep(0.5)
 
     try:
