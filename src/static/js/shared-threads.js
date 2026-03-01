@@ -231,6 +231,36 @@
     await closeThread(id);
   }
 
+  async function exportThread({ threadId, topic }) {
+    if (!threadId) return;
+    try {
+      const response = await fetch(`/api/threads/${threadId}/export`);
+      if (!response.ok) {
+        console.warn(`[ACB] Export failed: HTTP ${response.status}`);
+        return;
+      }
+      const text = await response.text();
+      const slug = (topic || threadId)
+        .toLowerCase()
+        .replace(/[^\w-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "") || "thread";
+      const filename = `${slug}.md`;
+      const blob = new Blob([text], { type: "text/markdown; charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.warn("[ACB] Export error:", err);
+    }
+  }
+
   async function copyThreadNameFromMenu({
     getContextMenuThread,
     hideThreadContextMenu,
@@ -281,6 +311,7 @@ Task: After entering, stand by. Human programmers may need to publish requiremen
     archiveThreadFromMenu,
     unarchiveThreadFromMenu,
     closeThreadFromMenu,
+    exportThread,
     copyThreadNameFromMenu,
     copyJoinPromptFromMenu,
   };
