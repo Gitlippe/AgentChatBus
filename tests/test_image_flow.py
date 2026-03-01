@@ -53,12 +53,15 @@ async def test_image_flow():
             "images": test_images,
             "mentions": ["agent-1", "agent-2"]
         }
+        sync = await crud.issue_reply_token(db, thread_id=thread_id)
         
         msg = await crud.msg_post(
             db, 
             thread_id=thread_id,
             author="test_user",
             content="Test message with images",
+            expected_last_seq=sync["current_seq"],
+            reply_token=sync["reply_token"],
             role="user",
             metadata=test_metadata
         )

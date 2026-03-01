@@ -28,7 +28,14 @@ from starlette.routing import Mount
 from src.config import HOST, PORT, get_config_dict, save_config_dict
 from src.db.database import get_db, close_db
 from src.db import crud
-from src.db.crud import RateLimitExceeded
+from src.db.crud import (
+    RateLimitExceeded,
+    MissingSyncFieldsError,
+    SeqMismatchError,
+    ReplyTokenInvalidError,
+    ReplyTokenExpiredError,
+    ReplyTokenReplayError,
+)
 from src.config import THREAD_TIMEOUT_ENABLED, THREAD_TIMEOUT_MINUTES, THREAD_TIMEOUT_SWEEP_INTERVAL, RELOAD_ENABLED
 from src.mcp_server import server as mcp_server, _session_language
 from src.content_filter import ContentFilterError
@@ -397,9 +404,15 @@ class MessageCreate(BaseModel):
     author: str = "human"
     role: Literal["user", "assistant", "system"] = "user"
     content: str
+    expected_last_seq: int
+    reply_token: str
     mentions: list[str] | None = None
     metadata: dict | None = None
     images: list[dict] | None = None  # [{url: str, name: str}, ...]
+
+class SyncContextRequest(BaseModel):
+    agent_id: str | None = None
+
 
 @app.get("/api/templates")
 async def api_list_templates():
@@ -475,6 +488,23 @@ async def api_delete_template(template_id: str):
         raise HTTPException(status_code=403, detail=err)
 
 
+@app.post("/api/threads/{thread_id}/sync-context")
+async def api_sync_context(thread_id: str, body: SyncContextRequest | None = None):
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        t = await asyncio.wait_for(crud.thread_get(db, thread_id), timeout=DB_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    if t is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    agent_id = body.agent_id if body else None
+    sync = await asyncio.wait_for(
+        crud.issue_reply_token(db, thread_id=thread_id, agent_id=agent_id),
+        timeout=DB_TIMEOUT,
+    )
+    return sync
+
 @app.post("/api/threads", status_code=201)
 async def api_create_thread(body: ThreadCreate):
     try:
@@ -509,10 +539,44 @@ async def api_post_message(thread_id: str, body: MessageCreate):
     try:
         m = await asyncio.wait_for(
             crud.msg_post(db, thread_id=thread_id, author=body.author,
-                         content=body.content, role=body.role,
+                         content=body.content,
+                         expected_last_seq=body.expected_last_seq,
+                         reply_token=body.reply_token,
+                         role=body.role,
                          metadata=msg_metadata if msg_metadata else None),
             timeout=DB_TIMEOUT
         )
+    except MissingSyncFieldsError as e:
+        raise HTTPException(status_code=400, detail={
+            "error": "MISSING_SYNC_FIELDS",
+            "missing_fields": e.missing_fields,
+            "action": "CALL_SYNC_CONTEXT_THEN_RETRY",
+        })
+    except SeqMismatchError as e:
+        raise HTTPException(status_code=409, detail={
+            "error": "SEQ_MISMATCH",
+            "expected_last_seq": e.expected_last_seq,
+            "current_seq": e.current_seq,
+            "new_messages": e.new_messages,
+            "action": "RE_READ_AND_RETRY",
+        })
+    except ReplyTokenInvalidError:
+        raise HTTPException(status_code=400, detail={
+            "error": "TOKEN_INVALID",
+            "action": "CALL_SYNC_CONTEXT_THEN_RETRY",
+        })
+    except ReplyTokenExpiredError as e:
+        raise HTTPException(status_code=400, detail={
+            "error": "TOKEN_EXPIRED",
+            "expires_at": e.expires_at,
+            "action": "CALL_SYNC_CONTEXT_THEN_RETRY",
+        })
+    except ReplyTokenReplayError as e:
+        raise HTTPException(status_code=400, detail={
+            "error": "TOKEN_REPLAY",
+            "consumed_at": e.consumed_at,
+            "action": "CALL_SYNC_CONTEXT_THEN_RETRY",
+        })
     except ContentFilterError as e:
         raise HTTPException(status_code=400, detail={"error": "Content blocked by filter", "pattern": e.pattern_name})
     except asyncio.TimeoutError:

@@ -47,6 +47,20 @@ async def _setup_db():
     return db
 
 
+async def _post_with_token(db, thread_id: str, author: str, content: str, metadata: dict | None = None):
+    """Helper to post a message with fresh sync token (for unit tests)."""
+    sync = await crud.issue_reply_token(db, thread_id=thread_id)
+    return await crud.msg_post(
+        db,
+        thread_id=thread_id,
+        author=author,
+        content=content,
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+        metadata=metadata,
+    )
+
+
 # ─────────────────────────────────────────────
 # Unit tests (in-memory DB)
 # ─────────────────────────────────────────────
@@ -57,7 +71,7 @@ async def test_msg_post_with_handoff_target():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "handoff-test-thread")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -77,7 +91,7 @@ async def test_msg_post_with_stop_reason():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "stop-reason-test")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -97,7 +111,7 @@ async def test_msg_post_with_both():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "both-meta-test")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -117,7 +131,7 @@ async def test_msg_post_backward_compat():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "no-meta-test")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -134,7 +148,7 @@ async def test_msg_post_handoff_event():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "handoff-event-test")
-        await crud.msg_post(
+        await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -158,7 +172,7 @@ async def test_msg_post_stop_event():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "stop-event-test")
-        await crud.msg_post(
+        await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -182,7 +196,7 @@ async def test_msg_post_no_handoff_event_when_missing():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "no-handoff-event-test")
-        await crud.msg_post(
+        await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -203,7 +217,7 @@ async def test_metadata_preserved_in_msg_list():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "meta-list-test")
-        await crud.msg_post(
+        await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -228,7 +242,7 @@ async def test_msg_wait_for_agent_match():
     try:
         thread = await crud.thread_create(db, "for-agent-match-test")
         # Post a message directed to agent-b
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -248,7 +262,7 @@ async def test_msg_wait_for_agent_no_match():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "for-agent-nomatch-test")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -266,7 +280,7 @@ async def test_msg_wait_no_filter_backward_compat():
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "no-filter-test")
-        msg = await crud.msg_post(
+        msg = await _post_with_token(
             db,
             thread_id=thread.id,
             author="agent-a",
@@ -283,6 +297,14 @@ async def test_msg_wait_no_filter_backward_compat():
 # HTTP integration tests (require running server)
 # ─────────────────────────────────────────────
 
+def _sync_and_post(client: httpx.Client, thread_id: str, payload: dict) -> dict:
+    """Helper to sync context and post message in one call."""
+    sync = client.post(f"/api/threads/{thread_id}/sync-context", json={}).json()
+    payload["expected_last_seq"] = sync["current_seq"]
+    payload["reply_token"] = sync["reply_token"]
+    return client.post(f"/api/threads/{thread_id}/messages", json=payload)
+
+
 @pytest.fixture(scope="module")
 def test_thread_id() -> str:
     """Create a test thread for metadata integration tests."""
@@ -297,7 +319,7 @@ def test_api_post_with_metadata(test_thread_id):
     """POST /api/threads/{id}/messages with handoff metadata succeeds."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        r = client.post(f"/api/threads/{test_thread_id}/messages", json={
+        r = _sync_and_post(client, test_thread_id, {
             "author": "integration-agent",
             "content": "Handing off to peer",
             "metadata": {"handoff_target": "peer-agent", "stop_reason": "complete"},
@@ -313,7 +335,7 @@ def test_api_messages_include_metadata(test_thread_id):
     with _build_client() as client:
         _require_server_or_skip(client)
         # Post a message with metadata
-        client.post(f"/api/threads/{test_thread_id}/messages", json={
+        _sync_and_post(client, test_thread_id, {
             "author": "integration-agent",
             "content": "Message with metadata",
             "metadata": {"handoff_target": "target-agent"},
@@ -331,7 +353,7 @@ def test_api_metadata_handoff_target(test_thread_id):
     """POST then GET verifies handoff_target is preserved."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        client.post(f"/api/threads/{test_thread_id}/messages", json={
+        _sync_and_post(client, test_thread_id, {
             "author": "integration-agent",
             "content": "Directed handoff message",
             "metadata": {"handoff_target": "specific-target"},
@@ -353,7 +375,7 @@ def test_api_metadata_stop_reason(test_thread_id):
     """POST then GET verifies stop_reason is preserved."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        client.post(f"/api/threads/{test_thread_id}/messages", json={
+        _sync_and_post(client, test_thread_id, {
             "author": "integration-agent",
             "content": "Convergence reached",
             "metadata": {"stop_reason": "convergence"},

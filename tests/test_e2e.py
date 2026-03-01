@@ -28,6 +28,22 @@ def _require_server_or_skip(client: httpx.Client) -> None:
     pytest.skip(f"AgentChatBus server is not reachable at {BASE_URL}")
 
 
+def _post_message_strict(client: httpx.Client, thread_id: str, author: str, role: str, content: str) -> httpx.Response:
+    sync = client.post(f"/api/threads/{thread_id}/sync-context", json={})
+    assert sync.status_code == 200, sync.text
+    sync_payload = sync.json()
+    return client.post(
+        f"/api/threads/{thread_id}/messages",
+        json={
+            "author": author,
+            "role": role,
+            "content": content,
+            "expected_last_seq": sync_payload["current_seq"],
+            "reply_token": sync_payload["reply_token"],
+        },
+    )
+
+
 @pytest.fixture(scope="module")
 def thread_id() -> str:
     with _build_client() as client:
@@ -57,9 +73,12 @@ def test_transcript_uri_message_post(thread_id: str):
         _require_server_or_skip(client)
 
         # This validates that the thread id from fixture is usable for message posting.
-        r = client.post(
-            f"/api/threads/{thread_id}/messages",
-            json={"author": "test-agent", "role": "user", "content": "Test message for E2E"},
+        r = _post_message_strict(
+            client,
+            thread_id=thread_id,
+            author="test-agent",
+            role="user",
+            content="Test message for E2E",
         )
         assert r.status_code == 201, r.text
 
@@ -86,9 +105,12 @@ def test_content_filter_allows_normal_text(cf_thread_id: str):
     """Normal messages must not be blocked."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        r = client.post(
-            f"/api/threads/{cf_thread_id}/messages",
-            json={"author": "test-agent", "role": "user", "content": "The refactor looks good, great work!"},
+        r = _post_message_strict(
+            client,
+            thread_id=cf_thread_id,
+            author="test-agent",
+            role="user",
+            content="The refactor looks good, great work!",
         )
         assert r.status_code == 201, r.text
 
@@ -97,9 +119,12 @@ def test_content_filter_blocks_aws_key(cf_thread_id: str):
     """Messages containing AWS access key IDs must be blocked with HTTP 400."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        r = client.post(
-            f"/api/threads/{cf_thread_id}/messages",
-            json={"author": "test-agent", "role": "user", "content": "Use key AKIAIOSFODNN7EXAMPLE123 to access the bucket"},
+        r = _post_message_strict(
+            client,
+            thread_id=cf_thread_id,
+            author="test-agent",
+            role="user",
+            content="Use key AKIAIOSFODNN7EXAMPLE123 to access the bucket",
         )
         assert r.status_code == 400, r.text
         body = r.json()
@@ -113,9 +138,12 @@ def test_content_filter_blocks_github_token(cf_thread_id: str):
     """Messages containing GitHub personal access tokens must be blocked."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        r = client.post(
-            f"/api/threads/{cf_thread_id}/messages",
-            json={"author": "test-agent", "role": "user", "content": "My token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456abcd"},
+        r = _post_message_strict(
+            client,
+            thread_id=cf_thread_id,
+            author="test-agent",
+            role="user",
+            content="My token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456abcd",
         )
         assert r.status_code == 400, r.text
         body = r.json()
@@ -127,9 +155,11 @@ def test_content_filter_allows_technical_discussion(cf_thread_id: str):
     """Technical code discussions mentioning 'token' in context must not be blocked."""
     with _build_client() as client:
         _require_server_or_skip(client)
-        r = client.post(
-            f"/api/threads/{cf_thread_id}/messages",
-            json={"author": "test-agent", "role": "user",
-                  "content": "We should rotate the token every 30 days and store it in a secrets manager, not in code."},
+        r = _post_message_strict(
+            client,
+            thread_id=cf_thread_id,
+            author="test-agent",
+            role="user",
+            content="We should rotate the token every 30 days and store it in a secrets manager, not in code.",
         )
         assert r.status_code == 201, r.text

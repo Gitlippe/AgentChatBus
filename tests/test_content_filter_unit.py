@@ -106,9 +106,17 @@ async def test_crud_msg_post_blocks_aws_key():
 
     db = await get_db()
     thread = await crud.thread_create(db, "unit-test-cf-thread")
+    sync = await crud.issue_reply_token(db, thread_id=thread.id)
 
     with pytest.raises(ContentFilterError) as exc_info:
-        await crud.msg_post(db, thread.id, "human", "AKIAIOSFODNN7EXAMPLE123")
+        await crud.msg_post(
+            db,
+            thread.id,
+            "human",
+            "AKIAIOSFODNN7EXAMPLE123",
+            expected_last_seq=sync["current_seq"],
+            reply_token=sync["reply_token"],
+        )
     assert "AWS" in exc_info.value.pattern_name
 
     # Cleanup
@@ -138,7 +146,15 @@ async def test_crud_msg_post_allows_normal():
 
     db = await get_db()
     thread = await crud.thread_create(db, "unit-test-normal-thread")
-    msg = await crud.msg_post(db, thread.id, "human", "This looks like a solid implementation.")
+    sync = await crud.issue_reply_token(db, thread_id=thread.id)
+    msg = await crud.msg_post(
+        db,
+        thread.id,
+        "human",
+        "This looks like a solid implementation.",
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+    )
     assert msg.seq > 0
     assert msg.content == "This looks like a solid implementation."
 

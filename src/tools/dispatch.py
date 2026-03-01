@@ -21,7 +21,14 @@ if "src.db.models" in sys.modules:
 if "src.db.crud" in sys.modules:
     importlib.reload(sys.modules["src.db.crud"])
 from src.db import crud
-from src.db.crud import RateLimitExceeded
+from src.db.crud import (
+    RateLimitExceeded,
+    MissingSyncFieldsError,
+    SeqMismatchError,
+    ReplyTokenInvalidError,
+    ReplyTokenExpiredError,
+    ReplyTokenReplayError,
+)
 from src.db.models import Message
 import src.mcp_server
 from src.config import BUS_VERSION, HOST, PORT, MSG_WAIT_TIMEOUT
@@ -289,15 +296,48 @@ async def handle_msg_post(db, arguments: dict[str, Any]) -> list[types.TextConte
             thread_id=arguments["thread_id"],
             author=arguments["author"],
             content=arguments["content"],
+            expected_last_seq=arguments.get("expected_last_seq"),
+            reply_token=arguments.get("reply_token"),
             role=arguments.get("role", "user"),
             metadata=arguments.get("metadata"),
         )
+    except MissingSyncFieldsError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "MISSING_SYNC_FIELDS",
+            "missing_fields": e.missing_fields,
+            "action": "CALL_MSG_WAIT_THEN_RETRY",
+        }))]
     except RateLimitExceeded as e:
         return [types.TextContent(type="text", text=json.dumps({
             "error": "Rate limit exceeded",
             "limit": e.limit,
             "window": e.window,
             "retry_after": e.retry_after,
+        }))]
+    except SeqMismatchError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "SEQ_MISMATCH",
+            "expected_last_seq": e.expected_last_seq,
+            "current_seq": e.current_seq,
+            "new_messages": e.new_messages,
+            "action": "RE_READ_AND_RETRY",
+        }))]
+    except ReplyTokenInvalidError:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "TOKEN_INVALID",
+            "action": "CALL_MSG_WAIT_THEN_RETRY",
+        }))]
+    except ReplyTokenExpiredError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "TOKEN_EXPIRED",
+            "expires_at": e.expires_at,
+            "action": "CALL_MSG_WAIT_THEN_RETRY",
+        }))]
+    except ReplyTokenReplayError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "TOKEN_REPLAY",
+            "consumed_at": e.consumed_at,
+            "action": "CALL_MSG_WAIT_THEN_RETRY",
         }))]
     except ContentFilterError as e:
         return [types.TextContent(type="text", text=json.dumps({
@@ -403,18 +443,41 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
     except asyncio.TimeoutError:
         msgs = []
 
+    token_payload = await crud.issue_reply_token(db, thread_id=thread_id, agent_id=agent_id)
+    envelope = {
+        "messages": [
+            {
+                "msg_id": m.id,
+                "author": m.author,
+                "author_id": m.author_id,
+                "author_name": m.author_name,
+                "role": m.role,
+                "content": m.content,
+                "seq": m.seq,
+                "created_at": m.created_at.isoformat(),
+                "metadata": m.metadata,
+            }
+            for m in msgs
+        ],
+        "current_seq": token_payload["current_seq"],
+        "reply_token": token_payload["reply_token"],
+        "reply_window": token_payload["reply_window"],
+    }
+
     return_format = arguments.get("return_format", "blocks")
     if return_format == "blocks":
         blocks: list[types.Content] = []
+        blocks.append(types.TextContent(type="text", text=json.dumps({
+            "type": "sync_context",
+            "current_seq": token_payload["current_seq"],
+            "reply_token": token_payload["reply_token"],
+            "reply_window": token_payload["reply_window"],
+        })))
         for m in msgs:
             blocks.extend(_message_to_blocks(m))
         return blocks
 
-    return [types.TextContent(type="text", text=json.dumps([
-        {"msg_id": m.id, "author": m.author, "author_id": m.author_id, "author_name": m.author_name, "role": m.role,
-         "content": m.content, "seq": m.seq, "created_at": m.created_at.isoformat(), "metadata": m.metadata}
-        for m in msgs
-    ]))]
+    return [types.TextContent(type="text", text=json.dumps(envelope))]
 
 async def handle_agent_register(db, arguments: dict[str, Any]) -> list[types.TextContent]:
     agent = await crud.agent_register(

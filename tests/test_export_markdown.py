@@ -24,6 +24,14 @@ def _require_server_or_skip(client: httpx.Client) -> None:
     pytest.skip(f"AgentChatBus server is not reachable at {BASE_URL}")
 
 
+def _sync_and_post(client: httpx.Client, thread_id: str, payload: dict) -> dict:
+    """Helper to sync context and post message in one call."""
+    sync = client.post(f"/api/threads/{thread_id}/sync-context", json={}).json()
+    payload["expected_last_seq"] = sync["current_seq"]
+    payload["reply_token"] = sync["reply_token"]
+    return client.post(f"/api/threads/{thread_id}/messages", json=payload)
+
+
 @pytest.fixture(scope="module")
 def export_thread_id() -> str:
     """Thread with 3 messages for export tests."""
@@ -34,9 +42,10 @@ def export_thread_id() -> str:
         tid = r.json()["id"]
 
         for i in range(1, 4):
-            r2 = client.post(
-                f"/api/threads/{tid}/messages",
-                json={"author": f"agent-{i}", "role": "user", "content": f"Message {i} content"},
+            r2 = _sync_and_post(
+                client,
+                tid,
+                {"author": f"agent-{i}", "role": "user", "content": f"Message {i} content"},
             )
             assert r2.status_code == 201, r2.text
 
@@ -112,9 +121,10 @@ def test_export_special_chars():
         assert r.status_code == 201
         tid = r.json()["id"]
 
-        client.post(
-            f"/api/threads/{tid}/messages",
-            json={
+        _sync_and_post(
+            client,
+            tid,
+            {
                 "author": "agent-x",
                 "role": "user",
                 "content": 'Content with | pipes | and "quotes" and `backticks`',

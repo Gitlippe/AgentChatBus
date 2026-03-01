@@ -81,7 +81,15 @@ async def test_legacy_schema_migrates_updated_at_and_supports_crud(tmp_path):
 
     # Confirm CRUD paths that rely on updated_at are safe after migration.
     t = await crud.thread_create(db, "post-migration-topic")
-    await crud.msg_post(db, thread_id=t.id, author="human", content="hello")
+    sync = await crud.issue_reply_token(db, thread_id=t.id)
+    await crud.msg_post(
+        db,
+        thread_id=t.id,
+        author="human",
+        content="hello",
+        expected_last_seq=sync["current_seq"],
+        reply_token=sync["reply_token"],
+    )
     threads = await crud.thread_list(db)
 
     assert any(thread.id == t.id and thread.updated_at is not None for thread in threads)

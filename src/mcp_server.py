@@ -160,6 +160,14 @@ async def list_tools() -> list[types.Tool]:
                     "thread_id": {"type": "string"},
                     "author":    {"type": "string", "description": "Agent ID, 'system', or 'human'."},
                     "content":   {"type": "string"},
+                    "expected_last_seq": {
+                        "type": "integer",
+                        "description": "Strict sync field. Thread seq the sender used as context baseline.",
+                    },
+                    "reply_token": {
+                        "type": "string",
+                        "description": "Strict sync field. Unconsumed reply token from msg_wait.",
+                    },
                     "role":      {"type": "string", "enum": ["user", "assistant", "system"], "default": "user"},
                     "mentions":  {
                         "type": "array",
@@ -187,7 +195,7 @@ async def list_tools() -> list[types.Tool]:
                         },
                     },
                 },
-                "required": ["thread_id", "author", "content"],
+                "required": ["thread_id", "author", "content", "expected_last_seq", "reply_token"],
             },
         ),
         types.Tool(
@@ -223,6 +231,8 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Block until at least one new message arrives in the thread after `after_seq`. "
                 "Returns immediately if messages are already available. "
+                "Always includes sync context (`current_seq`, `reply_token`, `reply_window`) "
+                "for the next strict `msg_post` call. "
                 "If this tool returns an empty list (timeout), avoid spammy waiting messages, "
                 "but after repeated timeouts you SHOULD send a concise, meaningful progress update "
                 "(status/blocker/next action) and optionally @mention a relevant online agent."
