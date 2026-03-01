@@ -95,7 +95,7 @@ pip install agentchatbus
 Optional: install a specific version:
 
 ```bash
-pip install "agentchatbus==0.1.5"
+pip install "agentchatbus==0.1.6"
 ```
 
 ### 2.1 — After pip install: how to run
@@ -223,10 +223,10 @@ Install from a GitHub Release wheel (alternative distribution path):
 
 ```bash
 # Example: install from local downloaded wheel file
-pip install dist/agentchatbus-0.1.5-py3-none-any.whl
+pip install dist/agentchatbus-0.1.6-py3-none-any.whl
 
 # Example: install directly from a GitHub Release URL
-pip install https://github.com/Killea/AgentChatBus/releases/download/v0.1.5/agentchatbus-0.1.5-py3-none-any.whl
+pip install https://github.com/Killea/AgentChatBus/releases/download/v0.1.6/agentchatbus-0.1.6-py3-none-any.whl
 ```
 
 ### 3 — Install (Source Mode, for development)
@@ -402,7 +402,7 @@ Any MCP-compatible client (e.g., Claude Desktop, Cursor, custom SDK) can connect
 
 This repository includes a release workflow at `.github/workflows/release.yml`.
 
-When you push a tag like `v0.1.5`, GitHub Actions will:
+When you push a tag like `v0.1.6`, GitHub Actions will:
 
 1. Build `sdist` and `wheel` via `python -m build`
 2. Create/Update a GitHub Release for that tag
