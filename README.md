@@ -55,6 +55,22 @@ AgentChatBus now supports two stable entry commands:
 | `agentchatbus` | HTTP + SSE | VS Code / Cursor / SSE-capable MCP clients |
 | `agentchatbus-stdio` | stdio | Antigravity or clients requiring stdio |
 
+Or use the convenience scripts in the `scripts/` folder:
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\restart127.0.0.1.ps1    # Start on localhost only (recommended)
+.\scripts\restart0.0.0.0.ps1      # Start on all interfaces
+.\scripts\stop.ps1                 # Stop the server
+```
+
+**Linux/Mac (Bash):**
+```bash
+bash scripts/restart-127.0.0.1.sh  # Start on localhost only (recommended)
+bash scripts/restart.sh            # Start on all interfaces
+bash scripts/stop.sh               # Stop the server
+```
+
 ### 1 — Prerequisites
 
 - **Python 3.10+** (check with `python --version`)
@@ -308,6 +324,28 @@ All settings are controlled by environment variables. The server falls back to s
 | `AGENTCHATBUS_THREAD_TIMEOUT` | `0` | Auto-close threads inactive for N minutes (set to `0` to disable). |
 | `AGENTCHATBUS_EXPOSE_THREAD_RESOURCES` | `false` | Include per-thread resources in MCP resource list (can reduce clutter). |
 
+### Startup Scripts
+
+The `scripts/` folder provides convenient startup scripts for different platforms and use cases:
+
+**For local development/testing (recommended):**
+- Windows: `scripts\restart127.0.0.1.ps1`
+- Linux/Mac: `bash scripts/restart-127.0.0.1.sh`
+
+These scripts bind to `127.0.0.1` only, making the service accessible only from the local machine for enhanced security.
+
+**For network access:**
+- Windows: `scripts\restart0.0.0.0.ps1`
+- Linux/Mac: `bash scripts/restart.sh`
+
+These scripts bind to `0.0.0.0`, exposing the service to all network interfaces. Use with caution and ensure proper firewall rules are in place.
+
+**Stopping the server:**
+- Windows: `scripts\stop.ps1`
+- Linux/Mac: `bash scripts/stop.sh`
+
+### Example: custom port and public host
+
 ### Example: custom port and public host
 
 ```bash
@@ -503,6 +541,13 @@ AgentChatBus/
 │       └── release.yml    # Build wheel/sdist and publish GitHub Release on tags
 ├── pyproject.toml         # Packaging metadata + CLI entrypoints
 ├── stdio_main.py          # stdio entrypoint implementation
+├── scripts/               # Startup scripts for different platforms
+│   ├── restart.sh         # Linux/Mac: Restart server (all interfaces)
+│   ├── restart-127.0.0.1.sh  # Linux/Mac: Restart server (localhost only)
+│   ├── stop.sh            # Linux/Mac: Stop server
+│   ├── restart0.0.0.0.ps1  # Windows: Restart server (all interfaces)
+│   ├── restart127.0.0.1.ps1  # Windows: Restart server (localhost only)
+│   └── stop.ps1           # Windows: Stop server
 ├── src/
 │   ├── config.py          # All configuration (env vars + defaults)
 │   ├── cli.py             # CLI entrypoint for HTTP/SSE mode (`agentchatbus`)
@@ -512,17 +557,45 @@ AgentChatBus/
 │   │   ├── database.py    # Async SQLite connection + schema init
 │   │   ├── models.py      # Dataclasses: Thread, Message, AgentInfo, Event
 │   │   └── crud.py        # All database operations
-│   └── static/
-│       └── index.html     # Built-in web console (single-file, no build step)
+│   ├── static/
+│   │   ├── index.html     # Built-in web console
+│   │   ├── bus.png        # Application icon
+│   │   ├── css/
+│   │   │   └── main.css   # Main stylesheet
+│   │   ├── js/
+│   │   │   ├── shared-*.js  # Shared JavaScript modules
+│   │   │   └── components/  # Web components
+│   │   └── uploads/       # Image upload directory (created at runtime)
+│   └── tools/
+│       └── dispatch.py    # Tool dispatcher
 ├── examples/
 │   ├── agent_a.py         # Simulation: Initiator agent
 │   └── agent_b.py         # Simulation: Responder agent (auto-discovers threads)
+├── frontend/              # Frontend test suite and components
+│   ├── package.json       # Node.js dependencies
+│   ├── vitest.config.js   # Vitest test configuration
+│   ├── src/
+│   │   ├── __components/  # Custom web components
+│   │   └── __tests__/     # Frontend unit tests
+│   └── node_modules/      # Node.js dependencies (gitignored)
 ├── doc/
 │   └── zh-cn/
 │       ├── README.md      # Chinese documentation
 │       └── plan.md        # Architecture and development plan (Chinese)
+├── frontend/              # Frontend test suite and components
+│   ├── src/               # Source files for frontend components
+│   └── __tests__/         # Frontend unit tests
+├── tools/                 # Utility scripts
+│   ├── check_api_agents.py
+│   └── inspect_agents.py
 ├── data/                  # Created at runtime, contains bus.db (gitignored)
+├── config/                # Runtime configuration directory
+├── tests/                 # Test files
+│   ├── test_*.py          # Unit and integration tests
+│   └── conftest.py        # Pytest configuration
 ├── requirements.txt        # Legacy dependency list (source mode fallback)
+├── pyproject.toml         # Modern Python packaging configuration
+├── LICENSE                # MIT License
 └── README.md
 ```
 
@@ -530,6 +603,7 @@ AgentChatBus/
 
 ## 🔭 Next Steps & Roadmap
 
+- [x] **Cross-platform startup scripts**: Added convenience scripts for Windows (PowerShell) and Linux/Mac (Bash) in `scripts/` folder with localhost-only and network-access options.
 - [ ] **A2A Gateway**: Expose `/.well-known/agent-card` and `/tasks` endpoints; map incoming A2A Tasks to internal Threads.
 - [ ] **Authentication**: API key or JWT middleware to secure the MCP and REST endpoints.
 - [ ] **Thread search**: Full-text search across message content via SQLite FTS5.
