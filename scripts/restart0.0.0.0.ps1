@@ -1,15 +1,15 @@
 # restart.ps1
 # One-shot restart script for AgentChatBus.
-# Usage (from project root):  .\restart.ps1
-# Usage (custom port):        .\restart.ps1 -Port 8080
-# Usage (network access):     .\restart.ps1 -ListenHost 0.0.0.0  # Exposes to network (USE WITH CAUTION!)
+# Usage (from project root):  .\scripts\restart0.0.0.0.ps1
+# Usage (custom port):        .\scripts\restart0.0.0.0.ps1 -Port 8080
+# Usage (network access):     .\scripts\restart0.0.0.0.ps1 -ListenHost 0.0.0.0  # Exposes to network (USE WITH CAUTION!)
 
 param(
     [string]$ListenHost = "0.0.0.0",  # Default: 0.0.0.0 binds to all network interfaces (CAUTION: security risk!)
     [int]$Port = 39765
 )
 
-Set-Location $PSScriptRoot
+Set-Location (Join-Path $PSScriptRoot "..")
 
 Write-Host "🛑 Stopping AgentChatBus (port $Port)..." -ForegroundColor Yellow
 

@@ -1,7 +1,7 @@
 # restart127.0.0.1.ps1
 # One-shot restart script for AgentChatBus (localhost only).
-# Usage (from project root):  .\restart127.0.0.1.ps1
-# Usage (custom port):        .\restart127.0.0.1.ps1 -Port 8080
+# Usage (from project root):  .\scripts\restart127.0.0.1.ps1
+# Usage (custom port):        .\scripts\restart127.0.0.1.ps1 -Port 8080
 #
 # This script binds to 127.0.0.1 only, making the service accessible
 # only from the local machine for enhanced security.
@@ -11,7 +11,7 @@ param(
     [int]$Port = 39765
 )
 
-Set-Location $PSScriptRoot
+Set-Location (Join-Path $PSScriptRoot "..")
 
 Write-Host "🛑 Stopping AgentChatBus (port $Port)..." -ForegroundColor Yellow
 

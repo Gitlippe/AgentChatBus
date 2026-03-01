@@ -46,7 +46,7 @@ Issues = "https://github.com/Killea/AgentChatBus/issues"
 
 [project.scripts]
 agentchatbus = "src.cli:main"
-agentchatbus-stdio = "stdio_main:run"
+agentchatbus-stdio = "src.stdio_main:run"
 
 [tool.setuptools]
 include-package-data = true
@@ -55,7 +55,13 @@ include-package-data = true
 include = ["src*"]
 
 [tool.setuptools.package-data]
-src = ["static/*.html", "static/*.png", "static/js/*.js"]
+src = [
+  "static/*.html",
+  "static/*.png",
+  "static/css/*.css",
+  "static/js/*.js",
+  "static/js/components/*.js",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

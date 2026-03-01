@@ -1,13 +1,13 @@
 # stop.ps1
 # Immediately stop AgentChatBus without restarting.
-# Usage:  .\stop.ps1
-# Usage (custom port):  .\stop.ps1 -Port 8080
+# Usage:  .\scripts\stop.ps1
+# Usage (custom port):  .\scripts\stop.ps1 -Port 8080
 
 param(
     [int]$Port = 39765
 )
 
-Set-Location $PSScriptRoot
+Set-Location (Join-Path $PSScriptRoot "..")
 
 Write-Host "🛑 Stopping AgentChatBus (port $Port)..." -ForegroundColor Yellow
 
