@@ -89,14 +89,14 @@ async def thread_create(db: aiosqlite.Connection, topic: str, metadata: Optional
     
     try:
         await db.execute(
-            "INSERT INTO threads (id, topic, status, created_at, metadata, system_prompt) VALUES (?, ?, 'discuss', ?, ?, ?)",
-            (tid, topic, now, meta_json, system_prompt),
+            "INSERT INTO threads (id, topic, status, created_at, updated_at, metadata, system_prompt) VALUES (?, ?, 'discuss', ?, ?, ?, ?)",
+            (tid, topic, now, now, meta_json, system_prompt),
         )
         await db.commit()
         await _emit_event(db, "thread.new", tid, {"thread_id": tid, "topic": topic})
         logger.info(f"Thread created: {tid} '{topic}'")
         return Thread(id=tid, topic=topic, status="discuss", created_at=_parse_dt(now),
-                      closed_at=None, summary=None, metadata=meta_json, system_prompt=system_prompt)
+                      updated_at=_parse_dt(now), closed_at=None, summary=None, metadata=meta_json, system_prompt=system_prompt)
     except sqlite3.IntegrityError as e:
         # UNIQUE constraint violation on threads.topic ΓÇö another thread was created concurrently
         # Fetch and return the existing thread for idempotency
@@ -128,21 +128,23 @@ async def thread_list(
     status: Optional[str] = None,
     include_archived: bool = False,
 ) -> list[Thread]:
+    # Order by updated_at DESC (most recent activity first), fallback to created_at
+    order_by = "ORDER BY COALESCE(updated_at, created_at) DESC"
     if status:
         async with db.execute(
-            "SELECT * FROM threads WHERE status = ? ORDER BY created_at DESC",
+            f"SELECT * FROM threads WHERE status = ? {order_by}",
             (status,),
         ) as cur:
             rows = await cur.fetchall()
         return [_row_to_thread(r) for r in rows]
 
     if include_archived:
-        async with db.execute("SELECT * FROM threads ORDER BY created_at DESC") as cur:
+        async with db.execute(f"SELECT * FROM threads {order_by}") as cur:
             rows = await cur.fetchall()
         return [_row_to_thread(r) for r in rows]
 
     async with db.execute(
-        "SELECT * FROM threads WHERE status != 'archived' ORDER BY created_at DESC"
+        f"SELECT * FROM threads WHERE status != 'archived' {order_by}"
     ) as cur:
         rows = await cur.fetchall()
     return [_row_to_thread(r) for r in rows]
@@ -233,11 +235,13 @@ async def thread_latest_seq(db: aiosqlite.Connection, thread_id: str) -> int:
 
 def _row_to_thread(row: aiosqlite.Row) -> Thread:
     system_prompt = row["system_prompt"] if "system_prompt" in row.keys() else None
+    updated_at = _parse_dt(row["updated_at"]) if "updated_at" in row.keys() and row["updated_at"] else None
     return Thread(
         id=row["id"],
         topic=row["topic"],
         status=row["status"],
         created_at=_parse_dt(row["created_at"]),
+        updated_at=updated_at,
         closed_at=_parse_dt(row["closed_at"]) if row["closed_at"] else None,
         summary=row["summary"],
         metadata=row["metadata"],
@@ -313,6 +317,11 @@ async def msg_post(
     await db.execute(
         "INSERT INTO messages (id, thread_id, author, role, content, seq, created_at, metadata, author_id, author_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (mid, thread_id, actual_author, role, content, seq, now, meta_json, author_id, author_name),
+    )
+    # Update thread's updated_at to reflect latest activity
+    await db.execute(
+        "UPDATE threads SET updated_at = ? WHERE id = ?",
+        (now, thread_id),
     )
     await db.commit()
     if author_id:

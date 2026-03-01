@@ -6,6 +6,7 @@ import aiosqlite
 import asyncio
 import logging
 import threading
+import sqlite3
 from pathlib import Path
 from typing import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,6 +22,37 @@ _initializing = False
 
 # Schema version for consistency tracking
 SCHEMA_VERSION = 1
+
+
+def _is_duplicate_column_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "duplicate column" in msg or "duplicate column name" in msg
+
+
+async def _add_column_if_missing(
+    db: aiosqlite.Connection,
+    table: str,
+    col: str,
+    typedef: str,
+) -> None:
+    """Add a column via ALTER TABLE.
+
+    SQLite doesn't support IF NOT EXISTS for ADD COLUMN, so we rely on catching
+    the duplicate-column error. Anything else is a real migration failure.
+    """
+    try:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+        await db.commit()
+        logger.info(f"Migration: added column '{table}.{col}'")
+    except sqlite3.OperationalError as e:
+        if _is_duplicate_column_error(e):
+            logger.debug(f"Migration skip: column '{table}.{col}' already exists")
+        else:
+            logger.exception(f"Migration failed while adding column '{table}.{col}'")
+            raise
+    except Exception:
+        logger.exception(f"Unexpected migration error while adding column '{table}.{col}'")
+        raise
 
 
 def _now() -> str:
@@ -91,6 +123,7 @@ async def init_schema(db: aiosqlite.Connection) -> None:
             topic       TEXT NOT NULL,
             status      TEXT NOT NULL DEFAULT 'discuss',
             created_at  TEXT NOT NULL,
+            updated_at  TEXT,
             closed_at   TEXT,
             summary     TEXT,
             metadata    TEXT,
@@ -203,57 +236,51 @@ async def init_schema(db: aiosqlite.Connection) -> None:
         ("ide",   "TEXT NOT NULL DEFAULT ''"),
         ("model", "TEXT NOT NULL DEFAULT ''"),
     ]:
-        try:
-            await db.execute(f"ALTER TABLE agents ADD COLUMN {col} {typedef}")
-            await db.commit()
-            logger.info(f"Migration: added column 'agents.{col}'")
-        except Exception:
-            pass  # Column already exists — safe to ignore
+        await _add_column_if_missing(db, "agents", col, typedef)
             
     for col, typedef in [
         ("author_id", "TEXT"),
         ("author_name", "TEXT"),
     ]:
-        try:
-            await db.execute(f"ALTER TABLE messages ADD COLUMN {col} {typedef}")
-            await db.commit()
-            logger.info(f"Migration: added column 'messages.{col}'")
-        except Exception:
-            pass
+        await _add_column_if_missing(db, "messages", col, typedef)
 
     for col, typedef in [
         ("system_prompt", "TEXT"),
     ]:
-        try:
-            await db.execute(f"ALTER TABLE threads ADD COLUMN {col} {typedef}")
-            await db.commit()
-            logger.info(f"Migration: added column 'threads.{col}'")
-        except Exception:
-            pass
+        await _add_column_if_missing(db, "threads", col, typedef)
+
+    # Migration: Add updated_at for thread activity tracking
+    try:
+        await db.execute("ALTER TABLE threads ADD COLUMN updated_at TEXT")
+        await db.commit()
+        logger.info("Migration: added column 'threads.updated_at'")
+        # Backfill: set updated_at = created_at for existing threads
+        await db.execute("UPDATE threads SET updated_at = created_at WHERE updated_at IS NULL")
+        await db.commit()
+        logger.info("Migration: backfilled updated_at from created_at for existing threads")
+    except sqlite3.OperationalError as e:
+        if _is_duplicate_column_error(e):
+            logger.debug("Migration: 'threads.updated_at' already exists, skipping")
+        else:
+            logger.error(f"Migration failed for 'threads.updated_at': {e}")
+            raise
+    except Exception as e:
+        logger.error(f"Unexpected migration error for 'threads.updated_at': {e}")
+        raise
 
     # Migration: Add display_name and alias_source for agent alias support
     for col, typedef in [
         ("display_name", "TEXT"),
         ("alias_source", "TEXT CHECK (alias_source IN ('auto', 'user'))"),
     ]:
-        try:
-            await db.execute(f"ALTER TABLE agents ADD COLUMN {col} {typedef}")
-            await db.commit()
-            logger.info(f"Migration: added column 'agents.{col}'")
-        except Exception:
-            pass
+        await _add_column_if_missing(db, "agents", col, typedef)
 
     # Migration: Add last_activity and last_activity_time for agent status tracking
     for col, typedef in [
         ("last_activity", "TEXT"),
         ("last_activity_time", "TEXT"),
     ]:
-        try:
-            await db.execute(f"ALTER TABLE agents ADD COLUMN {col} {typedef}")
-            await db.commit()
-            logger.info(f"Migration: added column 'agents.{col}'")
-        except Exception:
-            pass
+        await _add_column_if_missing(db, "agents", col, typedef)
 
     # Record current schema version
     await db.execute(
