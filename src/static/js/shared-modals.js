@@ -40,12 +40,13 @@
   let _templates = null;
 
   async function _loadTemplates(api) {
-    if (_templates) return _templates;
+    if (_templates !== null) return _templates;
     try {
       const result = await api("/api/templates");
       _templates = Array.isArray(result) ? result : [];
     } catch {
-      _templates = [];
+      // Keep cache unset on failure so future modal opens can retry.
+      return [];
     }
     return _templates;
   }

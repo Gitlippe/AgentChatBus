@@ -139,7 +139,7 @@ class _SseCompletedResponse:
 @app.get("/mcp/sse")
 async def mcp_sse_endpoint(request: Request):
     """MCP SSE endpoint consumed by MCP clients (Claude Desktop, Cursor, ΓÇª)."""
-    from src.mcp_server import init_session_id
+    from src.mcp_server import init_session_id, clear_connection_agent
     
     # Initialize unique session ID for this SSE connection
     session_id = init_session_id()
@@ -161,6 +161,9 @@ async def mcp_sse_endpoint(request: Request):
         # Most are normal disconnects (anyio.ClosedResourceError, CancelledErrorΓÇª).
         # Log at DEBUG to avoid polluting the terminal.
         logger.debug("MCP SSE session ended: %s: %s", type(exc).__name__, exc)
+    finally:
+        # Ensure per-connection agent mapping is cleaned when SSE disconnects.
+        clear_connection_agent(session_id)
     return _SseCompletedResponse()
 
 
@@ -423,9 +426,15 @@ async def api_get_template(template_id: str):
         raise HTTPException(status_code=503, detail="Database operation timeout")
     if t is None:
         raise HTTPException(status_code=404, detail="Template not found")
+    default_metadata = None
+    if t.default_metadata:
+        try:
+            default_metadata = json.loads(t.default_metadata)
+        except (TypeError, ValueError):
+            default_metadata = t.default_metadata
     return {
         "id": t.id, "name": t.name, "description": t.description,
-        "system_prompt": t.system_prompt, "default_metadata": t.default_metadata,
+        "system_prompt": t.system_prompt, "default_metadata": default_metadata,
         "is_builtin": t.is_builtin, "created_at": t.created_at.isoformat(),
     }
 

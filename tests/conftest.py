@@ -68,10 +68,7 @@ def server():
                     return
         except Exception:
             if i == max_retries - 1:
-                print(f"WARNING: Server failed to start after {max_retries} attempts. "
-                      "Integration tests will be skipped; unit tests can still run.")
-                yield
-                return
+                raise Exception(f"Server failed to start after {max_retries} attempts")
             continue
     
     yield
