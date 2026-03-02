@@ -28,7 +28,7 @@ from mcp.server.sse import SseServerTransport
 from starlette.routing import Mount
 
 from src.config import HOST, PORT, get_config_dict, save_config_dict, ADMIN_TOKEN
-from src.db.database import get_db, close_db
+from src.db.database import get_db, close_db, SCHEMA_VERSION
 from src.db import crud
 from src.db.crud import (
     RateLimitExceeded,
@@ -53,6 +53,9 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Database operation timeout (seconds)
 # Support environment variable override via AGENTCHATBUS_DB_TIMEOUT
 DB_TIMEOUT = int(os.getenv("AGENTCHATBUS_DB_TIMEOUT", "5"))
+
+# Server start time — set in lifespan(), used by /api/metrics (UP-22)
+_start_time: datetime | None = None
 
 
 async def _cleanup_events_loop():
@@ -196,6 +199,8 @@ async def _admin_coordinator_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _start_time
+    _start_time = datetime.now(timezone.utc)
     # Startup: initialize DB
     try:
         await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
@@ -846,18 +851,12 @@ async def api_create_thread(body: ThreadCreate):
             crud.thread_create(db, body.topic, body.metadata, body.system_prompt, template=body.template),
             timeout=DB_TIMEOUT
         )
-        sync = await asyncio.wait_for(
-            crud.issue_reply_token(db, thread_id=t.id),
-            timeout=DB_TIMEOUT,
-        )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Database operation timeout")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"id": t.id, "topic": t.topic, "status": t.status, "system_prompt": t.system_prompt,
-            "template_id": t.template_id, "created_at": t.created_at.isoformat(),
-            "current_seq": sync["current_seq"], "reply_token": sync["reply_token"],
-            "reply_window": sync["reply_window"]}
+            "template_id": t.template_id, "created_at": t.created_at.isoformat()}
 
 @app.post("/api/threads/{thread_id}/messages", status_code=201)
 async def api_post_message(thread_id: str, body: MessageCreate, x_agent_token: str | None = Header(default=None)):
@@ -1428,8 +1427,40 @@ async def api_get_thread_admin(thread_id: str):
 
 
 # ─────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Metrics (UP-22)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Return bus-level observability metrics.
+
+    Unlike /health (a lightweight liveness probe with no DB calls), this
+    endpoint queries the database for real-time statistics about threads,
+    messages, and agents.  All values are derived from existing tables —
+    no schema changes are required.
+    """
+    db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+    metrics = await asyncio.wait_for(crud.get_bus_metrics(db), timeout=DB_TIMEOUT)
+
+    uptime_seconds: float = 0.0
+    started_at: str | None = None
+    if _start_time is not None:
+        delta = datetime.now(timezone.utc) - _start_time
+        uptime_seconds = round(delta.total_seconds(), 1)
+        started_at = _start_time.isoformat()
+
+    return {
+        "status": "ok",
+        "uptime_seconds": uptime_seconds,
+        "started_at": started_at,
+        **metrics,
+        "schema_version": SCHEMA_VERSION,
+    }
+
+
 # Health check
-# ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+# ──────────────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
