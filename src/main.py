@@ -817,6 +817,8 @@ class ThreadCreate(BaseModel):
     metadata: dict | None = None
     system_prompt: str | None = None
     template: str | None = None   # Template ID for defaults (UP-18)
+    agent_id: str | None = None   # Optional creator agent ID for admin assignment
+    token: str | None = None      # Optional creator token (required when agent_id is provided)
 
 
 class TemplateCreate(BaseModel):
@@ -968,12 +970,41 @@ async def api_create_thread(body: ThreadCreate):
 
     try:
         db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+
+        creator_agent = None
+        if body.agent_id:
+            if not body.token:
+                raise HTTPException(status_code=401, detail="token is required when agent_id is provided")
+            token_valid = await asyncio.wait_for(
+                crud.agent_verify_token(db, body.agent_id, body.token),
+                timeout=DB_TIMEOUT,
+            )
+            if not token_valid:
+                raise HTTPException(status_code=401, detail="Invalid agent_id/token")
+            creator_agent = await asyncio.wait_for(crud.agent_get(db, body.agent_id), timeout=DB_TIMEOUT)
+            if creator_agent is None:
+                raise HTTPException(status_code=404, detail="Creator agent not found")
+
         t = await asyncio.wait_for(
             crud.thread_create(db, body.topic, body.metadata, body.system_prompt, template=body.template),
             timeout=DB_TIMEOUT
         )
+
+        if creator_agent is not None:
+            settings = await asyncio.wait_for(crud.thread_settings_get_or_create(db, t.id), timeout=DB_TIMEOUT)
+            if settings.auto_administrator_enabled:
+                creator_name = creator_agent.display_name or creator_agent.name
+                await asyncio.wait_for(
+                    crud.thread_settings_set_creator_admin(db, t.id, creator_agent.id, creator_name),
+                    timeout=DB_TIMEOUT,
+                )
+                await asyncio.wait_for(
+                    crud._set_agent_activity(db, creator_agent.id, "thread_create", touch_heartbeat=True),
+                    timeout=DB_TIMEOUT,
+                )
+
         sync = await asyncio.wait_for(
-            crud.issue_reply_token(db, thread_id=t.id),
+            crud.issue_reply_token(db, thread_id=t.id, agent_id=creator_agent.id if creator_agent else None),
             timeout=DB_TIMEOUT,
         )
     except asyncio.TimeoutError:
