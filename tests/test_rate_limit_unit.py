@@ -35,6 +35,7 @@ async def _get_db():
         pass
     db = await dbmod.get_db()
     # Clean up any existing test data from rate limit tests
+    await db.execute("DELETE FROM events WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'rl-%')")
     await db.execute("DELETE FROM reply_tokens WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'rl-%')")
     await db.execute("DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'rl-%')")
     await db.execute("DELETE FROM threads WHERE topic LIKE 'rl-%'")

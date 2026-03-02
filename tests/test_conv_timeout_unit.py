@@ -28,6 +28,7 @@ async def db_context():
     db = await dbmod.get_db()
     try:
         # Clean up any existing test data
+        await db.execute("DELETE FROM events WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'timeout-%')")
         await db.execute("DELETE FROM reply_tokens WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'timeout-%')")
         await db.execute("DELETE FROM messages WHERE thread_id IN (SELECT id FROM threads WHERE topic LIKE 'timeout-%')")
         await db.execute("DELETE FROM threads WHERE topic LIKE 'timeout-%'")
