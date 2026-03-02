@@ -99,3 +99,153 @@ async def test_seq_mismatch_returns_new_messages_context():
         assert len(err.new_messages) >= SEQ_TOLERANCE
     finally:
         await db.close()
+
+
+# ==================== P0 Test Suite: Token & Seq Validation ====================
+
+@pytest.mark.asyncio
+async def test_token_rejects_cross_thread_use():
+    """Test 1: Token issued for thread A must not work for thread B"""
+    db = await _make_db()
+    try:
+        thread_a = await crud.thread_create(db, topic="cross-thread-a")
+        thread_b = await crud.thread_create(db, topic="cross-thread-b")
+        
+        # Issue token for thread A
+        sync_a = await crud.issue_reply_token(db, thread_id=thread_a.id)
+        
+        # Try to use token_a in thread_b → should reject
+        with pytest.raises(crud.ReplyTokenInvalidError):
+            await crud.msg_post(
+                db,
+                thread_id=thread_b.id,  # ← Different thread!
+                author="human",
+                content="wrong-thread-use",
+                expected_last_seq=sync_a["current_seq"],
+                reply_token=sync_a["reply_token"],  # ← Token from thread A
+            )
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_token_rejects_cross_agent_use():
+    """Test 2: Token bound to agent_a must not work for agent_b"""
+    db = await _make_db()
+    try:
+        thread = await crud.thread_create(db, topic="cross-agent")
+        
+        # Register two agents
+        agent_a = await crud.agent_register(db, ide="VSCode", model="GPT-A", display_name=None)
+        agent_b = await crud.agent_register(db, ide="VSCode", model="GPT-B", display_name=None)
+        
+        # Issue token bound to agent_a
+        sync = await crud.issue_reply_token(db, thread_id=thread.id, agent_id=agent_a.id)
+        
+        # Try to use token from agent_a as agent_b → should reject
+        with pytest.raises(crud.ReplyTokenInvalidError):
+            await crud.msg_post(
+                db,
+                thread_id=thread.id,
+                author=agent_b.id,  # ← Different agent!
+                content="wrong-agent-use",
+                expected_last_seq=sync["current_seq"],
+                reply_token=sync["reply_token"],  # ← Token bound to agent_a
+            )
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_seq_tolerance_boundary_exactly_five():
+    """Test 3: Seq tolerance boundary - exactly 5 msgs should PASS, >5 should FAIL"""
+    db = await _make_db()
+    try:
+        thread = await crud.thread_create(db, topic="seq-boundary")
+        baseline = await crud.issue_reply_token(db, thread_id=thread.id)
+        baseline_seq = baseline["current_seq"]
+        
+        # Advance thread by exactly SEQ_TOLERANCE (5) messages
+        for i in range(SEQ_TOLERANCE):  # Add 5 messages
+            await _post_with_fresh_token(db, thread.id, "human", f"msg-{i}")
+        
+        # Get fresh token
+        fresh = await crud.issue_reply_token(db, thread_id=thread.id)
+        
+        # Case 1: new_count = 5 should PASS (tolerance limit)
+        current_seq = await crud.thread_latest_seq(db, thread.id)
+        assert current_seq - baseline_seq == SEQ_TOLERANCE  # Verify exactly 5 messages added
+        
+        # This should succeed (new_messages_count = 5, NOT > 5)
+        msg = await crud.msg_post(
+            db,
+            thread_id=thread.id,
+            author="human",
+            content="at-tolerance-boundary",
+            expected_last_seq=baseline_seq,
+            reply_token=fresh["reply_token"],
+        )
+        assert msg is not None  # Should succeed
+        
+        # Case 2: Add one more message, now new_count = 6 should FAIL
+        for i in range(1):  # Add 1 more message → total 6 beyond baseline
+            await _post_with_fresh_token(db, thread.id, "human", "msg-extra")
+        
+        fresh2 = await crud.issue_reply_token(db, thread_id=thread.id)
+        
+        # This should fail (new_messages_count = 6 > SEQ_TOLERANCE)
+        with pytest.raises(crud.SeqMismatchError) as exc_info:
+            await crud.msg_post(
+                db,
+                thread_id=thread.id,
+                author="human",
+                content="beyond-tolerance",
+                expected_last_seq=baseline_seq,
+                reply_token=fresh2["reply_token"],
+            )
+        
+        err = exc_info.value
+        assert err.current_seq - err.expected_last_seq > SEQ_TOLERANCE
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_token_consumption_race():
+    """Test 4: Two concurrent msg_post calls with same token → one succeeds, one fails"""
+    import asyncio
+    db = await _make_db()
+    try:
+        thread = await crud.thread_create(db, topic="concurrent-race")
+        sync = await crud.issue_reply_token(db, thread_id=thread.id)
+        
+        # Prepare two identical msg_post calls with the same token
+        async def attempt_post(author: str, content: str):
+            return await crud.msg_post(
+                db,
+                thread_id=thread.id,
+                author=author,
+                content=content,
+                expected_last_seq=sync["current_seq"],
+                reply_token=sync["reply_token"],  # ← Same token!
+            )
+        
+        # Launch both concurrently
+        task1 = asyncio.create_task(attempt_post("agent1", "first-attempt"))
+        task2 = asyncio.create_task(attempt_post("agent2", "second-attempt"))
+        
+        results = await asyncio.gather(task1, task2, return_exceptions=True)
+        
+        # One should succeed (Message object), one should fail (exception)
+        success_count = sum(1 for r in results if isinstance(r, crud.Message))
+        failure_count = sum(1 for r in results if isinstance(r, Exception))
+        
+        assert success_count == 1, f"Expected 1 success, got {success_count}"
+        assert failure_count == 1, f"Expected 1 failure, got {failure_count}"
+        
+        # The failure should be ReplyTokenReplayError
+        exception = [r for r in results if isinstance(r, Exception)][0]
+        assert isinstance(exception, crud.ReplyTokenReplayError), f"Expected ReplyTokenReplayError, got {type(exception)}"
+        
+    finally:
+        await db.close()
