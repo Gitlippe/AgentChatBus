@@ -12,7 +12,9 @@ import logging
 import os
 import time
 import uuid
+import random
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -80,6 +82,92 @@ async def _thread_timeout_loop() -> None:
         except Exception as exc:
             logger.warning(f"Thread timeout sweep error: {exc}")
 
+
+async def _admin_coordinator_loop() -> None:
+    """Background task: periodically check for thread coordination timeouts and assign admins."""
+    logger.info("Admin coordinator loop enabled: checking for coordination timeouts every 10s")
+    while True:
+        try:
+            await asyncio.sleep(10)
+            db = await get_db()
+            
+            # Get all threads with timed out coordination
+            timeout_settings = await asyncio.wait_for(
+                crud.thread_settings_get_timeouts(db),
+                timeout=DB_TIMEOUT,
+            )
+            
+            for ts in timeout_settings:
+                # Calculate elapsed time
+                elapsed = (datetime.now(timezone.utc) - ts.last_activity_time.replace(tzinfo=timezone.utc)).total_seconds()
+                
+                if elapsed >= ts.timeout_seconds:
+                    # Time to assign an admin
+                    try:
+                        # Get online agents for this thread
+                        agents = await asyncio.wait_for(
+                            crud.agent_list(db),
+                            timeout=DB_TIMEOUT,
+                        )
+                        online_agents = [a for a in agents if a.is_online]
+                        
+                        if not online_agents:
+                            # No online agents, try any agents
+                            if agents:
+                                selected_agent = random.choice(agents)
+                            else:
+                                logger.warning(f"No agents available to assign as admin for thread {ts.thread_id}")
+                                continue
+                        else:
+                            selected_agent = random.choice(online_agents)
+                        
+                        # Assign admin and send system message
+                        await asyncio.wait_for(
+                            crud.thread_settings_assign_admin(
+                                db,
+                                ts.thread_id,
+                                selected_agent.id,
+                                selected_agent.name,
+                            ),
+                            timeout=DB_TIMEOUT,
+                        )
+                        
+                        # Create system directive message
+                        system_msg_content = (
+                            f"You have been automatically selected as the coordinator for Thread {ts.thread_id}. "
+                            f"Please begin coordination: (1) Take a poll asking other agents about their current status; "
+                            f"(2) Provide a summary of completed items and next steps; "
+                            f"(3) Assign concrete tasks if discussion stalls. "
+                            f"You can modify the timeout setting if needed."
+                        )
+                        metadata = {
+                            "thread_id": ts.thread_id,
+                            "assigned_at": datetime.now(timezone.utc).isoformat(),
+                            "assignment_type": "auto_selection",
+                            "timeout_remaining_seconds": ts.timeout_seconds,
+                        }
+                        
+                        # Post system message
+                        await asyncio.wait_for(
+                            crud._msg_create_system(
+                                db,
+                                thread_id=ts.thread_id,
+                                content=system_msg_content,
+                                metadata=metadata,
+                            ),
+                            timeout=DB_TIMEOUT,
+                        )
+                        
+                        logger.info(f"Assigned admin {selected_agent.name} ({selected_agent.id}) to thread {ts.thread_id}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"Timeout while assigning admin for thread {ts.thread_id}")
+                    except Exception as e:
+                        logger.error(f"Error assigning admin for thread {ts.thread_id}: {e}")
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning(f"Admin coordinator loop error: {exc}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize DB
@@ -90,10 +178,12 @@ async def lifespan(app: FastAPI):
         raise
     cleanup_task = asyncio.create_task(_cleanup_events_loop())
     timeout_task = asyncio.create_task(_thread_timeout_loop()) if THREAD_TIMEOUT_ENABLED else None
+    admin_task = asyncio.create_task(_admin_coordinator_loop())
     logger.info(f"AgentChatBus running at http://{HOST}:{PORT}")
     yield
     # Shutdown: close DB
     cleanup_task.cancel()
+    admin_task.cancel()
     if timeout_task is not None:
         timeout_task.cancel()
         try:
@@ -102,6 +192,10 @@ async def lifespan(app: FastAPI):
             pass
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await admin_task
     except asyncio.CancelledError:
         pass
     try:
@@ -1027,6 +1121,113 @@ async def api_thread_export(thread_id: str):
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Thread Settings APIs
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/threads/{thread_id}/settings")
+async def api_get_thread_settings(thread_id: str):
+    """Get thread settings (coordination and automation config)."""
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        # Verify thread exists
+        t = await asyncio.wait_for(crud.thread_get(db, thread_id), timeout=DB_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    if t is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    try:
+        settings = await asyncio.wait_for(
+            crud.thread_settings_get_or_create(db, thread_id),
+            timeout=DB_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    
+    return {
+        "thread_id": settings.thread_id,
+        "auto_coordinator_enabled": settings.auto_coordinator_enabled,
+        "timeout_seconds": settings.timeout_seconds,
+        "last_activity_time": settings.last_activity_time.isoformat(),
+        "auto_assigned_admin_id": settings.auto_assigned_admin_id,
+        "auto_assigned_admin_name": settings.auto_assigned_admin_name,
+        "admin_assignment_time": settings.admin_assignment_time.isoformat() if settings.admin_assignment_time else None,
+        "created_at": settings.created_at.isoformat(),
+        "updated_at": settings.updated_at.isoformat(),
+    }
+
+
+class ThreadSettingsUpdate(BaseModel):
+    auto_coordinator_enabled: bool | None = None
+    timeout_seconds: int | None = None
+    model_config = ConfigDict(extra="ignore")
+
+
+@app.post("/api/threads/{thread_id}/settings")
+async def api_update_thread_settings(thread_id: str, body: ThreadSettingsUpdate):
+    """Update thread settings for coordination and timeout."""
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        # Verify thread exists
+        t = await asyncio.wait_for(crud.thread_get(db, thread_id), timeout=DB_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    if t is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    
+    try:
+        settings = await asyncio.wait_for(
+            crud.thread_settings_update(
+                db,
+                thread_id,
+                auto_coordinator_enabled=body.auto_coordinator_enabled,
+                timeout_seconds=body.timeout_seconds,
+            ),
+            timeout=DB_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    return {
+        "thread_id": settings.thread_id,
+        "auto_coordinator_enabled": settings.auto_coordinator_enabled,
+        "timeout_seconds": settings.timeout_seconds,
+        "last_activity_time": settings.last_activity_time.isoformat(),
+        "auto_assigned_admin_id": settings.auto_assigned_admin_id,
+        "auto_assigned_admin_name": settings.auto_assigned_admin_name,
+        "admin_assignment_time": settings.admin_assignment_time.isoformat() if settings.admin_assignment_time else None,
+        "created_at": settings.created_at.isoformat(),
+        "updated_at": settings.updated_at.isoformat(),
+    }
+
+
+@app.get("/api/threads/{thread_id}/admin")
+async def api_get_thread_admin(thread_id: str):
+    """Get current auto-assigned admin for a thread."""
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        settings = await asyncio.wait_for(
+            crud.thread_settings_get_or_create(db, thread_id),
+            timeout=DB_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    
+    if not settings.auto_assigned_admin_id:
+        return {"admin_id": None, "admin_name": None, "assigned_at": None, "expires_at": None}
+    
+    return {
+        "admin_id": settings.auto_assigned_admin_id,
+        "admin_name": settings.auto_assigned_admin_name,
+        "assigned_at": settings.admin_assignment_time.isoformat() if settings.admin_assignment_time else None,
+        "expires_at": None,  # No expiration for now
+    }
+
 
 
 # ─────────────────────────────────────────────

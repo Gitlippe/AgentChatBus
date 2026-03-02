@@ -14,6 +14,7 @@
     scrollBottom,
   }) {
     setActiveThread(id, status);
+    window.currentThreadId = id;  // Set global currentThreadId for modals
     setLastSeq(0);
     clearThreadParticipants();
 

@@ -51,6 +51,33 @@
               <button class="btn-primary" onclick="submitSettings()">Save (Requires Restart)</button>
             </div>
           </div>
+        </div>
+
+        <div id="thread-settings-modal-overlay" onclick="closeThreadSettingsModal(event)"
+          style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);align-items:center;justify-content:center;z-index:100;animation:fade-in .15s ease;">
+          <div id="thread-settings-modal"
+            style="background:var(--bg-card);border:1px solid var(--border-light);border-radius:14px;padding:28px;width:480px;max-width:90vw;box-shadow:var(--shadow);animation:modal-in .2s ease;"
+            onclick="event.stopPropagation()">
+            <h3 style="font-size:16px;font-weight:600;margin-bottom:18px;color:var(--text-1)">⚙️ Thread Settings</h3>
+            
+            <label style="display:block;font-size:13px;color:var(--text-2);margin-bottom:6px;">Enable Auto Coordinator</label>
+            <input id="ts-auto-coordinator" type="checkbox" style="width:18px;height:18px;cursor:pointer;margin-bottom:16px;" />
+            
+            <label style="display:block;font-size:13px;color:var(--text-2);margin-bottom:6px;">Auto Coordinator Timeout (seconds)</label>
+            <input id="ts-timeout-seconds" type="number" min="10" max="300" value="60"
+              style="width:100%;background:var(--bg-input);border:1px solid var(--border-light);color:var(--text-1);border-radius:10px;padding:10px 14px;font-size:14px;font-family:inherit;margin-bottom:16px;" />
+            
+            <div style="background:var(--bg-input);border:1px solid var(--border-light);border-radius:10px;padding:12px;margin-bottom:16px;font-size:13px;color:var(--text-2);">
+              <strong>Current Admin:</strong> <span id="ts-current-admin">None assigned</span>
+            </div>
+            
+            <div id="thread-settings-message" style="font-size:12px;color:var(--green);margin-bottom:16px;display:none;"></div>
+            
+            <div class="modal-actions">
+              <button class="btn-secondary" onclick="closeThreadSettingsModal()">Cancel</button>
+              <button class="btn-primary" onclick="submitThreadSettings()">Save</button>
+            </div>
+          </div>
         </div>`;
     }
   }

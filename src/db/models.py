@@ -77,3 +77,18 @@ class Event:
     thread_id: Optional[str]
     payload: str         # JSON string
     created_at: datetime
+
+
+@dataclass
+class ThreadSettings:
+    """Settings for thread-level coordination and automation."""
+    id: int
+    thread_id: str
+    auto_coordinator_enabled: bool = True
+    timeout_seconds: int = 60               # 10-300 seconds
+    last_activity_time: datetime = field(default_factory=lambda: datetime.now())
+    auto_assigned_admin_id: Optional[str] = None
+    auto_assigned_admin_name: Optional[str] = None
+    admin_assignment_time: Optional[datetime] = None
+    created_at: datetime = field(default_factory=lambda: datetime.now())
+    updated_at: datetime = field(default_factory=lambda: datetime.now())

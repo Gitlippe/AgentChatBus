@@ -7,12 +7,13 @@ import uuid
 import secrets
 import logging
 import sqlite3
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import aiosqlite
 
-from src.db.models import Thread, Message, AgentInfo, Event, ThreadTemplate
+from src.db.models import Thread, Message, AgentInfo, Event, ThreadTemplate, ThreadSettings
 from src.config import (
     AGENT_HEARTBEAT_TIMEOUT,
     RATE_LIMIT_MSG_PER_MINUTE,
@@ -336,6 +337,188 @@ async def issue_reply_token(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Thread Settings CRUD
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def thread_settings_get_or_create(
+    db: aiosqlite.Connection,
+    thread_id: str,
+) -> ThreadSettings:
+    """Get thread settings or create with defaults if not exists."""
+    async with db.execute(
+        "SELECT * FROM thread_settings WHERE thread_id = ?",
+        (thread_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    
+    if row:
+        return ThreadSettings(
+            id=row["id"],
+            thread_id=row["thread_id"],
+            auto_coordinator_enabled=bool(row["auto_coordinator_enabled"]),
+            timeout_seconds=row["timeout_seconds"],
+            last_activity_time=_parse_dt(row["last_activity_time"]),
+            auto_assigned_admin_id=row["auto_assigned_admin_id"],
+            auto_assigned_admin_name=row["auto_assigned_admin_name"],
+            admin_assignment_time=_parse_dt(row["admin_assignment_time"]) if row["admin_assignment_time"] else None,
+            created_at=_parse_dt(row["created_at"]),
+            updated_at=_parse_dt(row["updated_at"]),
+        )
+    
+    # Create new settings with defaults
+    now = _now()
+    await db.execute(
+        """
+        INSERT INTO thread_settings 
+        (thread_id, auto_coordinator_enabled, timeout_seconds, last_activity_time, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (thread_id, True, 60, now, now, now),
+    )
+    await db.commit()
+    
+    # Fetch and return the newly created settings
+    async with db.execute(
+        "SELECT * FROM thread_settings WHERE thread_id = ?",
+        (thread_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    
+    return ThreadSettings(
+        id=row["id"],
+        thread_id=row["thread_id"],
+        auto_coordinator_enabled=bool(row["auto_coordinator_enabled"]),
+        timeout_seconds=row["timeout_seconds"],
+        last_activity_time=_parse_dt(row["last_activity_time"]),
+        auto_assigned_admin_id=row["auto_assigned_admin_id"],
+        auto_assigned_admin_name=row["auto_assigned_admin_name"],
+        admin_assignment_time=_parse_dt(row["admin_assignment_time"]) if row["admin_assignment_time"] else None,
+        created_at=_parse_dt(row["created_at"]),
+        updated_at=_parse_dt(row["updated_at"]),
+    )
+
+
+async def thread_settings_update(
+    db: aiosqlite.Connection,
+    thread_id: str,
+    auto_coordinator_enabled: Optional[bool] = None,
+    timeout_seconds: Optional[int] = None,
+) -> ThreadSettings:
+    """Update thread settings for coordination and timeouts."""
+    # Validate timeout_seconds if provided
+    if timeout_seconds is not None:
+        if timeout_seconds < 10 or timeout_seconds > 300:
+            raise ValueError("timeout_seconds must be between 10 and 300")
+    
+    # Prepare update statement
+    updates = []
+    values = []
+    
+    if auto_coordinator_enabled is not None:
+        updates.append("auto_coordinator_enabled = ?")
+        values.append(1 if auto_coordinator_enabled else 0)
+    
+    if timeout_seconds is not None:
+        updates.append("timeout_seconds = ?")
+        values.append(timeout_seconds)
+    
+    updates.append("updated_at = ?")
+    values.append(_now())
+    values.append(thread_id)
+    
+    if updates:
+        await db.execute(
+            f"UPDATE thread_settings SET {', '.join(updates)} WHERE thread_id = ?",
+            values,
+        )
+        await db.commit()
+    
+    # Return updated settings
+    return await thread_settings_get_or_create(db, thread_id)
+
+
+async def thread_settings_update_activity(
+    db: aiosqlite.Connection,
+    thread_id: str,
+) -> None:
+    """Update last_activity_time and clear auto-assigned admin (activity detected)."""
+    now = _now()
+    await db.execute(
+        """
+        UPDATE thread_settings 
+        SET last_activity_time = ?, 
+            auto_assigned_admin_id = NULL,
+            auto_assigned_admin_name = NULL,
+            admin_assignment_time = NULL,
+            updated_at = ?
+        WHERE thread_id = ?
+        """,
+        (now, now, thread_id),
+    )
+    await db.commit()
+
+
+async def thread_settings_assign_admin(
+    db: aiosqlite.Connection,
+    thread_id: str,
+    admin_id: str,
+    admin_name: str,
+) -> ThreadSettings:
+    """Assign an admin to the thread (automatic coordinator selection)."""
+    now = _now()
+    await db.execute(
+        """
+        UPDATE thread_settings 
+        SET auto_assigned_admin_id = ?,
+            auto_assigned_admin_name = ?,
+            admin_assignment_time = ?,
+            updated_at = ?
+        WHERE thread_id = ?
+        """,
+        (admin_id, admin_name, now, now, thread_id),
+    )
+    await db.commit()
+    return await thread_settings_get_or_create(db, thread_id)
+
+
+async def thread_settings_get_timeouts(
+    db: aiosqlite.Connection,
+) -> list[ThreadSettings]:
+    """Get all thread settings where timeout has been exceeded (and no admin assigned yet).
+    
+    This query calculates elapsed time in seconds and compares against timeout_seconds.
+    Returns threads where: (now - last_activity_time) >= timeout_seconds
+    """
+    now = _now()
+    async with db.execute(
+        """
+        SELECT * FROM thread_settings 
+        WHERE auto_coordinator_enabled = 1
+        AND auto_assigned_admin_id IS NULL
+        AND (strftime('%s', ?) - strftime('%s', last_activity_time)) >= timeout_seconds
+        """,
+        (now,),
+    ) as cur:
+        rows = await cur.fetchall()
+    
+    result = []
+    for row in rows:
+        result.append(ThreadSettings(
+            id=row["id"],
+            thread_id=row["thread_id"],
+            auto_coordinator_enabled=bool(row["auto_coordinator_enabled"]),
+            timeout_seconds=row["timeout_seconds"],
+            last_activity_time=_parse_dt(row["last_activity_time"]),
+            auto_assigned_admin_id=row["auto_assigned_admin_id"],
+            auto_assigned_admin_name=row["auto_assigned_admin_name"],
+            admin_assignment_time=_parse_dt(row["admin_assignment_time"]) if row["admin_assignment_time"] else None,
+            created_at=_parse_dt(row["created_at"]),
+            updated_at=_parse_dt(row["updated_at"]),
+        ))
+    return result
+
+
 async def _get_new_messages_since(
     db: aiosqlite.Connection,
     thread_id: str,
@@ -588,6 +771,10 @@ async def msg_post(
     await db.commit()
     if author_id:
         await agent_msg_post(db, author_id)
+    
+    # Update thread activity for timeout tracking
+    await thread_settings_update_activity(db, thread_id)
+    
     await _emit_event(db, "msg.new", thread_id, {
         "msg_id": mid, "thread_id": thread_id, "author": author_name,
         "author_id": author_id, "role": role, "seq": seq, "content": content[:200],  # truncate for event payload
@@ -666,6 +853,49 @@ async def msg_list(
         
     return msgs
 
+
+async def _msg_create_system(
+    db: aiosqlite.Connection,
+    thread_id: str,
+    content: str,
+    metadata: Optional[dict] = None,
+) -> Message:
+    """Internal: Create a system message without reply token validation.
+    
+    Used by internal coordination logic and background tasks.
+    """
+    mid = str(uuid.uuid4())
+    now = _now()
+    seq = await next_seq(db)
+    meta_json = json.dumps(metadata) if metadata else None
+    
+    await db.execute(
+        "INSERT INTO messages (id, thread_id, author, role, content, seq, created_at, metadata, author_id, author_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (mid, thread_id, "system", "system", content, seq, now, meta_json, "system", "System"),
+    )
+    await db.execute(
+        "UPDATE threads SET updated_at = ? WHERE id = ?", (now, thread_id)
+    )
+    
+    # Mark system message as consumed in reply_tokens (if using strict mode)
+    # For system messages, we don't consume user tokens
+    
+    await db.commit()
+    
+    # Update thread activity for timeout tracking
+    await thread_settings_update_activity(db, thread_id)
+    
+    await _emit_event(db, "msg.new", thread_id, {
+        "msg_id": mid, "thread_id": thread_id, "author": "System",
+        "author_id": "system", "role": "system", "seq": seq, "content": content[:200],
+    })
+    
+    logger.debug(f"System message created: seq={seq} thread={thread_id}")
+    return Message(
+        id=mid, thread_id=thread_id, author="system", role="system",
+        content=content, seq=seq, created_at=_parse_dt(now), metadata=meta_json,
+        author_id="system", author_name="System"
+    )
 
 def _row_to_message(row: aiosqlite.Row) -> Message:
     # safe dict-like fallback for new columns on older DB schemas

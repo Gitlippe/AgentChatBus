@@ -283,6 +283,25 @@ async def init_schema(db: aiosqlite.Connection) -> None:
             created_at       TEXT NOT NULL,
             is_builtin       INTEGER NOT NULL DEFAULT 0
         );
+
+        -- ----------------------------------------------------------------
+        -- Thread settings: automation and coordination configuration per thread
+        -- ----------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS thread_settings (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id                   TEXT UNIQUE NOT NULL REFERENCES threads(id),
+            auto_coordinator_enabled    INTEGER NOT NULL DEFAULT 1,
+            timeout_seconds             INTEGER NOT NULL DEFAULT 60 CHECK (timeout_seconds >= 10 AND timeout_seconds <= 300),
+            last_activity_time          TEXT NOT NULL,
+            auto_assigned_admin_id      TEXT,
+            auto_assigned_admin_name    TEXT,
+            admin_assignment_time       TEXT,
+            created_at                  TEXT NOT NULL,
+            updated_at                  TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_thread_settings_activity
+            ON thread_settings(last_activity_time);
     """)
     await db.commit()
 

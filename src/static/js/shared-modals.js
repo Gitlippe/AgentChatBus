@@ -9,6 +9,11 @@
       visibility: "style",
       styleVisibleValue: "flex",
     },
+    "thread-settings": {
+      overlayId: "thread-settings-modal-overlay",
+      visibility: "style",
+      styleVisibleValue: "flex",
+    },
   };
 
   function getOverlay(configKey) {
@@ -158,6 +163,83 @@
     }
   }
 
+  // Thread Settings Modal Functions
+  async function openThreadSettingsModal(api) {
+    const threadId = window.currentThreadId;
+    if (!threadId) {
+      console.error("No current thread selected");
+      return;
+    }
+
+    document.getElementById("thread-settings-message").style.display = "none";
+    setModalVisible("thread-settings", true);
+
+    try {
+      const res = await api(`/api/threads/${threadId}/settings`);
+      if (res) {
+        document.getElementById("ts-auto-coordinator").checked = res.auto_coordinator_enabled || true;
+        document.getElementById("ts-timeout-seconds").value = res.timeout_seconds || 60;
+      }
+    } catch (err) {
+      console.error("Error loading thread settings:", err);
+    }
+
+    // Load current admin info
+    try {
+      const adminRes = await api(`/api/threads/${threadId}/admin`);
+      if (adminRes && adminRes.admin_name) {
+        document.getElementById("ts-current-admin").textContent = adminRes.admin_name;
+      }
+    } catch (err) {
+      console.error("Error loading admin info:", err);
+    }
+  }
+
+  function closeThreadSettingsModal(e) {
+    if (e && !isOverlayClick(e, "thread-settings")) return;
+    setModalVisible("thread-settings", false);
+  }
+
+  async function submitThreadSettings(api) {
+    const threadId = window.currentThreadId;
+    if (!threadId) {
+      console.error("No current thread selected");
+      return;
+    }
+
+    const autoCoordinator = document.getElementById("ts-auto-coordinator").checked;
+    const timeoutSeconds = parseInt(document.getElementById("ts-timeout-seconds").value, 10);
+
+    // Validation
+    if (isNaN(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300) {
+      alert("Timeout must be between 10 and 300 seconds");
+      return;
+    }
+
+    try {
+      const res = await api(`/api/threads/${threadId}/settings`, {
+        method: "POST",
+        body: JSON.stringify({
+          auto_coordinator_enabled: autoCoordinator,
+          timeout_seconds: timeoutSeconds,
+        }),
+      });
+      if (res && res.success) {
+        const msg = document.getElementById("thread-settings-message");
+        msg.textContent = "Settings saved successfully!";
+        msg.style.display = "block";
+        msg.style.color = "var(--green)";
+        setTimeout(() => closeThreadSettingsModal(), 1500);
+      }
+    } catch (err) {
+      console.error("Error saving thread settings:", err);
+      const msg = document.getElementById("thread-settings-message");
+      msg.textContent = "Error saving settings";
+      msg.style.display = "block";
+      msg.style.color = "var(--red, #f05555)";
+    }
+  }
+
   window.AcbModals = {
     openThreadModal,
     closeThreadModal,
@@ -165,5 +247,19 @@
     openSettingsModal,
     closeSettingsModal,
     submitSettings,
+    openThreadSettingsModal,
+    closeThreadSettingsModal,
+    submitThreadSettings,
+  };
+
+  // Global wrappers for onclick handlers
+  window.openThreadSettingsModal = function() {
+    const api = window.sharedApi || console.error;
+    openThreadSettingsModal(api);
+  };
+  window.closeThreadSettingsModal = closeThreadSettingsModal;
+  window.submitThreadSettings = function() {
+    const api = window.sharedApi || console.error;
+    submitThreadSettings(api);
   };
 })();
