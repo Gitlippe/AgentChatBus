@@ -6,7 +6,6 @@ Covers:
 - Integration tests (server on port 39769): REST API pagination, envelope response, 400 on invalid cursor
 """
 import asyncio
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -17,7 +16,7 @@ import pytest
 from src.db import crud
 from src.db.database import init_schema
 
-BASE_URL = os.getenv("AGENTCHATBUS_TEST_BASE_URL", "http://127.0.0.1:39769")
+from tests._constants import TEST_BASE_URL as BASE_URL
 
 
 # ─────────────────────────────────────────────

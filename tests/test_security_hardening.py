@@ -14,7 +14,7 @@ import os
 import httpx
 import pytest
 
-BASE_URL = os.getenv("AGENTCHATBUS_TEST_BASE_URL", "http://127.0.0.1:39766")
+from tests._constants import TEST_BASE_URL as BASE_URL
 
 
 def _build_client() -> httpx.Client:

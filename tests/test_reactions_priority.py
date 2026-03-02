@@ -13,7 +13,6 @@ Total: 29 tests
 """
 import asyncio
 import json
-import os
 
 import aiosqlite
 import httpx
@@ -22,7 +21,7 @@ import pytest
 from src.db import crud
 from src.db.database import init_schema
 
-BASE_URL = os.getenv("AGENTCHATBUS_TEST_BASE_URL", "http://127.0.0.1:39769")
+from tests._constants import TEST_BASE_URL as BASE_URL
 
 
 # ─────────────────────────────────────────────

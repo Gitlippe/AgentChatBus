@@ -3,13 +3,12 @@ Tests for the thread Markdown export endpoint (UI-03).
 
 GET /api/threads/{thread_id}/export
 """
-import os
 import httpx
 import pytest
 
 # NOTE: This test suite must run against a dedicated test server instance.
 # Do NOT default to AGENTCHATBUS_BASE_URL (which may point at a production/dev server).
-BASE_URL = os.getenv("AGENTCHATBUS_TEST_BASE_URL", "http://127.0.0.1:39769")
+from tests._constants import TEST_BASE_URL as BASE_URL
 
 
 def _build_client() -> httpx.Client:
