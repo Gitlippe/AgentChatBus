@@ -439,8 +439,8 @@ class MessageCreate(BaseModel):
     author: str = "human"
     role: Literal["user", "assistant", "system"] = "user"
     content: str
-    expected_last_seq: int
-    reply_token: str
+    expected_last_seq: int | None = None
+    reply_token: str | None = None
     mentions: list[str] | None = None
     metadata: dict | None = None
     images: list[dict] | None = None  # [{url: str, name: str}, ...]
@@ -603,6 +603,27 @@ async def api_post_message(thread_id: str, body: MessageCreate, x_agent_token: s
         if not token_valid:
             raise HTTPException(status_code=401, detail="Invalid agent token")
 
+    # REST compatibility: allow callers to omit strict sync fields.
+    # The MCP tool surface remains strict (expects msg_wait -> msg_post).
+    expected_last_seq = body.expected_last_seq
+    reply_token = body.reply_token
+    if expected_last_seq is None or not reply_token:
+        try:
+            sync = await asyncio.wait_for(
+                crud.issue_reply_token(
+                    db,
+                    thread_id=thread_id,
+                    agent_id=body.author if known_agent is not None else None,
+                ),
+                timeout=DB_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=503, detail="Database operation timeout")
+        if expected_last_seq is None:
+            expected_last_seq = sync["current_seq"]
+        if not reply_token:
+            reply_token = sync["reply_token"]
+
     msg_metadata = body.metadata or {}
     if body.mentions:
         msg_metadata["mentions"] = body.mentions
@@ -613,8 +634,8 @@ async def api_post_message(thread_id: str, body: MessageCreate, x_agent_token: s
         m = await asyncio.wait_for(
             crud.msg_post(db, thread_id=thread_id, author=body.author,
                          content=body.content,
-                         expected_last_seq=body.expected_last_seq,
-                         reply_token=body.reply_token,
+                         expected_last_seq=expected_last_seq,
+                         reply_token=reply_token,
                          role=body.role,
                          metadata=msg_metadata if msg_metadata else None),
             timeout=DB_TIMEOUT
