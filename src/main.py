@@ -146,7 +146,8 @@ class _SseCompletedResponse:
 @app.get("/mcp/sse")
 async def mcp_sse_endpoint(request: Request):
     """MCP SSE endpoint consumed by MCP clients (Claude Desktop, Cursor, ΓÇª)."""
-    from src.mcp_server import init_session_id
+    from src.mcp_server import init_session_id, pop_agent_for_session
+    from src.db import crud
     
     # Initialize unique session ID for this SSE connection
     session_id = init_session_id()
@@ -166,8 +167,17 @@ async def mcp_sse_endpoint(request: Request):
             )
     except Exception as exc:
         # Most are normal disconnects (anyio.ClosedResourceError, CancelledErrorΓÇª).
-        # Log at DEBUG to avoid polluting the terminal.
-        logger.debug("MCP SSE session ended: %s: %s", type(exc).__name__, exc)
+        # Mark agent as offline if it was registered for this connection.
+        agent_id, token = pop_agent_for_session(session_id)
+        if agent_id and token:
+            try:
+                db = await get_db()
+                await crud.agent_unregister(db, agent_id, token)
+                logger.info(f"Agent {agent_id} marked offline (SSE disconnect)")
+            except Exception as db_err:
+                logger.warning(f"Failed to mark agent {agent_id} offline: {db_err}")
+        else:
+            logger.debug("MCP SSE session ended (no agent registered): %s: %s", type(exc).__name__, exc)
     return _SseCompletedResponse()
 
 

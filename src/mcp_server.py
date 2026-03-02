@@ -71,6 +71,23 @@ def get_connection_agent() -> tuple[str | None, str | None]:
         return agent_info["agent_id"], agent_info["token"]
     return None, None
 
+def get_agent_for_session(session_id: str | None) -> str | None:
+    """Retrieve agent_id for a given session_id (independent of current context)."""
+    if not session_id:
+        return None
+    agent_info = _connection_agents.get(session_id)
+    return agent_info.get("agent_id") if agent_info else None
+
+def pop_agent_for_session(session_id: str | None) -> tuple[str | None, str | None]:
+    """Remove and return (agent_id, token) for a session. Called on disconnect."""
+    if not session_id:
+        return None, None
+    agent_info = _connection_agents.pop(session_id, None)
+    if agent_info:
+        logger.info(f"[pop_agent] removed from session {session_id[:8]}: agent_id={agent_info['agent_id']}")
+        return agent_info["agent_id"], agent_info["token"]
+    return None, None
+
 # Create the MCP server instance
 server = Server("AgentChatBus")
 
