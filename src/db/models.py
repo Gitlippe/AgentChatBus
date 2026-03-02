@@ -84,7 +84,7 @@ class ThreadSettings:
     """Settings for thread-level coordination and automation."""
     id: int
     thread_id: str
-    auto_coordinator_enabled: bool = True
+    auto_coordinator_enabled: bool = False
     timeout_seconds: int = 60               # 10-300 seconds
     last_activity_time: datetime = field(default_factory=lambda: datetime.now())
     auto_assigned_admin_id: Optional[str] = None

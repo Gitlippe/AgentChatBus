@@ -389,7 +389,7 @@ async def thread_settings_get_or_create(
         (thread_id, auto_coordinator_enabled, timeout_seconds, last_activity_time, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (thread_id, True, 60, now, now, now),
+        (thread_id, False, 60, now, now, now),
     )
     await db.commit()
     
@@ -493,6 +493,7 @@ async def thread_settings_assign_admin(
             admin_assignment_time = ?,
             updated_at = ?
         WHERE thread_id = ?
+          AND auto_coordinator_enabled = 1
         """,
         (admin_id, admin_name, now, now, thread_id),
     )
@@ -520,6 +521,7 @@ async def thread_settings_set_creator_admin(
             creator_assignment_time = ?,
             updated_at = ?
         WHERE thread_id = ?
+          AND auto_coordinator_enabled = 1
         """,
         (creator_id, creator_name, now, now, thread_id),
     )

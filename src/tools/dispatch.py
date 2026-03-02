@@ -214,11 +214,14 @@ async def handle_thread_create(db, arguments: dict[str, Any]) -> list[types.Text
     agent_id, _ = src.mcp_server.get_connection_agent()
     if agent_id:
         await crud._set_agent_activity(db, agent_id, "thread_create", touch_heartbeat=True)
-        
-        # 设置创建者为 Thread 管理员
-        agent_info = await crud.agent_get(db, agent_id)
-        if agent_info:
-            await crud.thread_settings_set_creator_admin(db, result.id, agent_id, agent_info.name)
+
+        # Auto coordinator disabled means no automatic admin assignment.
+        settings = await crud.thread_settings_get_or_create(db, result.id)
+        if settings.auto_coordinator_enabled:
+            # 设置创建者为 Thread 管理员
+            agent_info = await crud.agent_get(db, agent_id)
+            if agent_info:
+                await crud.thread_settings_set_creator_admin(db, result.id, agent_id, agent_info.name)
     
     return [types.TextContent(type="text", text=json.dumps({
         "thread_id": result.id, "topic": result.topic, "status": result.status,

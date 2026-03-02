@@ -38,7 +38,7 @@ async def test_thread_settings_get_or_create(db):
     
     assert settings is not None
     assert settings.thread_id == thread_id
-    assert settings.auto_coordinator_enabled is True
+    assert settings.auto_coordinator_enabled is False
     assert settings.timeout_seconds == 60
     assert settings.auto_assigned_admin_id is None
 
@@ -94,6 +94,9 @@ async def test_thread_settings_update_activity(db):
     # Wait a bit to ensure time difference
     await asyncio.sleep(0.1)
     
+    # Enable auto coordinator before automatic admin assignment.
+    await crud.thread_settings_update(db, thread_id, auto_coordinator_enabled=True)
+
     # Assign admin
     await crud.thread_settings_assign_admin(db, thread_id, "agent-1", "TestAgent")
     settings = await crud.thread_settings_get_or_create(db, thread_id)
@@ -163,7 +166,7 @@ async def test_timeout_detection_simple(db):
     
     # Should be ~15 seconds elapsed with 10 second timeout
     assert elapsed >= settings.timeout_seconds
-    assert settings.auto_coordinator_enabled is True
+    assert settings.auto_coordinator_enabled is False
     assert settings.auto_assigned_admin_id is None
 
 
@@ -175,6 +178,9 @@ async def test_assign_admin(db):
     # Create settings
     await crud.thread_settings_get_or_create(db, thread_id)
     
+    # Enable auto coordinator before automatic admin assignment.
+    await crud.thread_settings_update(db, thread_id, auto_coordinator_enabled=True)
+
     # Assign admin
     assigned = await crud.thread_settings_assign_admin(
         db,
@@ -190,6 +196,34 @@ async def test_assign_admin(db):
     # Verify persistence
     fetched = await crud.thread_settings_get_or_create(db, thread_id)
     assert fetched.auto_assigned_admin_id == "agent-uuid-123"
+
+
+@pytest.mark.asyncio
+async def test_assign_admin_ignored_when_auto_coordinator_disabled(db):
+    """Auto assignment must be ignored when auto coordinator is disabled."""
+    thread_id = await create_test_thread(db)
+    await crud.thread_settings_get_or_create(db, thread_id)
+
+    await crud.thread_settings_assign_admin(db, thread_id, "agent-disabled", "DisabledAgent")
+    fetched = await crud.thread_settings_get_or_create(db, thread_id)
+
+    assert fetched.auto_coordinator_enabled is False
+    assert fetched.auto_assigned_admin_id is None
+    assert fetched.auto_assigned_admin_name is None
+
+
+@pytest.mark.asyncio
+async def test_set_creator_admin_ignored_when_auto_coordinator_disabled(db):
+    """Creator auto-assignment must be ignored when auto coordinator is disabled."""
+    thread_id = await create_test_thread(db)
+    await crud.thread_settings_get_or_create(db, thread_id)
+
+    await crud.thread_settings_set_creator_admin(db, thread_id, "creator-1", "CreatorAgent")
+    fetched = await crud.thread_settings_get_or_create(db, thread_id)
+
+    assert fetched.auto_coordinator_enabled is False
+    assert fetched.creator_admin_id is None
+    assert fetched.creator_admin_name is None
 
 
 @pytest.mark.asyncio

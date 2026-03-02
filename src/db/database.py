@@ -290,7 +290,7 @@ async def init_schema(db: aiosqlite.Connection) -> None:
         CREATE TABLE IF NOT EXISTS thread_settings (
             id                          INTEGER PRIMARY KEY AUTOINCREMENT,
             thread_id                   TEXT UNIQUE NOT NULL REFERENCES threads(id),
-            auto_coordinator_enabled    INTEGER NOT NULL DEFAULT 1,
+            auto_coordinator_enabled    INTEGER NOT NULL DEFAULT 0,
             timeout_seconds             INTEGER NOT NULL DEFAULT 60 CHECK (timeout_seconds >= 10 AND timeout_seconds <= 300),
             last_activity_time          TEXT NOT NULL,
             auto_assigned_admin_id      TEXT,

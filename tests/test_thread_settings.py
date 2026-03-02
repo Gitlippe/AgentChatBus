@@ -35,7 +35,7 @@ async def test_thread_settings_get_or_create(db_with_thread):
     
     assert settings is not None
     assert settings.thread_id == thread_id
-    assert settings.auto_coordinator_enabled is True
+    assert settings.auto_coordinator_enabled is False
     assert settings.timeout_seconds == 60
     assert settings.auto_assigned_admin_id is None
 
@@ -91,6 +91,9 @@ async def test_thread_settings_update_activity(db_with_thread):
     # Wait a bit to ensure time difference
     await asyncio.sleep(0.1)
     
+    # Enable auto coordinator before automatic admin assignment.
+    await crud.thread_settings_update(db, thread_id, auto_coordinator_enabled=True)
+
     # Assign admin
     await crud.thread_settings_assign_admin(db, thread_id, "agent-1", "TestAgent")
     settings = await crud.thread_settings_get_or_create(db, thread_id)
@@ -163,7 +166,7 @@ async def test_timeout_detection_simple(db_with_thread):
     
     # Should be ~15 seconds elapsed with 10 second timeout
     assert elapsed >= settings.timeout_seconds
-    assert settings.auto_coordinator_enabled is True
+    assert settings.auto_coordinator_enabled is False
     assert settings.auto_assigned_admin_id is None
 
 
@@ -175,6 +178,9 @@ async def test_assign_admin(db_with_thread):
     # Create settings
     await crud.thread_settings_get_or_create(db, thread_id)
     
+    # Enable auto coordinator before automatic admin assignment.
+    await crud.thread_settings_update(db, thread_id, auto_coordinator_enabled=True)
+
     # Assign admin
     assigned = await crud.thread_settings_assign_admin(
         db,

@@ -177,7 +177,7 @@
     try {
       const res = await api(`/api/threads/${threadId}/settings`);
       if (res) {
-        document.getElementById("ts-auto-coordinator").checked = res.auto_coordinator_enabled || true;
+        document.getElementById("ts-auto-coordinator").checked = res.auto_coordinator_enabled ?? false;
         document.getElementById("ts-timeout-seconds").value = res.timeout_seconds || 60;
       }
     } catch (err) {
