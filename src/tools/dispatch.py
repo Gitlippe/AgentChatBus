@@ -200,6 +200,11 @@ async def handle_bus_get_config(db, arguments: dict[str, Any]) -> list[types.Tex
     }))]
 
 async def handle_thread_create(db, arguments: dict[str, Any]) -> list[types.TextContent]:
+    # Resolve current connection agent before creating the thread so creator-admin
+    # can be persisted at thread creation time.
+    agent_id, _ = src.mcp_server.get_connection_agent()
+    agent_info = await crud.agent_get(db, agent_id) if agent_id else None
+
     try:
         result = await crud.thread_create(
             db,
@@ -207,22 +212,15 @@ async def handle_thread_create(db, arguments: dict[str, Any]) -> list[types.Text
             arguments.get("metadata"),
             arguments.get("system_prompt"),
             template=arguments.get("template"),
+            creator_admin_id=agent_info.id if agent_info else None,
+            creator_admin_name=(agent_info.display_name or agent_info.name) if agent_info else None,
         )
     except ValueError as e:
         return [types.TextContent(type="text", text=json.dumps({"error": str(e)}))]
     
     # RQ-001: 同步 agent 在线状态 — thread_create 作为 activity 触发点
-    agent_id, _ = src.mcp_server.get_connection_agent()
     if agent_id:
         await crud._set_agent_activity(db, agent_id, "thread_create", touch_heartbeat=True)
-
-        # Auto administrator disabled means no automatic admin assignment.
-        settings = await crud.thread_settings_get_or_create(db, result.id)
-        if settings.auto_administrator_enabled:
-            # Set creator as Thread administrator
-            agent_info = await crud.agent_get(db, agent_id)
-            if agent_info:
-                await crud.thread_settings_set_creator_admin(db, result.id, agent_id, agent_info.name)
 
     token_payload = await crud.issue_reply_token(db, thread_id=result.id, agent_id=agent_id)
 

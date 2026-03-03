@@ -146,6 +146,8 @@ async def thread_create(
     metadata: Optional[dict] = None,
     system_prompt: Optional[str] = None,
     template: Optional[str] = None,
+    creator_admin_id: Optional[str] = None,
+    creator_admin_name: Optional[str] = None,
 ) -> Thread:
     # Resolve template defaults (UP-18): apply before caller overrides
     template_id: Optional[str] = None
@@ -173,6 +175,35 @@ async def thread_create(
             "INSERT INTO threads (id, topic, status, created_at, metadata, system_prompt, template_id) VALUES (?, ?, 'discuss', ?, ?, ?, ?)",
             (tid, topic, now, meta_json, system_prompt, template_id),
         )
+
+        # Persist thread settings at creation time so creator-admin is recorded
+        # immediately in the database instead of being backfilled later.
+        await db.execute(
+            """
+            INSERT INTO thread_settings (
+                thread_id,
+                auto_administrator_enabled,
+                timeout_seconds,
+                last_activity_time,
+                creator_admin_id,
+                creator_admin_name,
+                creator_assignment_time,
+                created_at,
+                updated_at
+            )
+            VALUES (?, 1, 60, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                tid,
+                now,
+                creator_admin_id,
+                creator_admin_name,
+                now if creator_admin_id else None,
+                now,
+                now,
+            ),
+        )
+
         await db.commit()
         await _emit_event(db, "thread.new", tid, {"thread_id": tid, "topic": topic})
         logger.info(f"Thread created: {tid} '{topic}'")

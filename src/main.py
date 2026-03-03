@@ -984,22 +984,23 @@ async def api_create_thread(body: ThreadCreate):
             )
 
         t = await asyncio.wait_for(
-            crud.thread_create(db, body.topic, body.metadata, body.system_prompt, template=body.template),
+            crud.thread_create(
+                db,
+                body.topic,
+                body.metadata,
+                body.system_prompt,
+                template=body.template,
+                creator_admin_id=creator_agent.id if creator_agent else None,
+                creator_admin_name=(creator_agent.display_name or creator_agent.name) if creator_agent else None,
+            ),
             timeout=DB_TIMEOUT
         )
 
         if creator_agent is not None:
-            settings = await asyncio.wait_for(crud.thread_settings_get_or_create(db, t.id), timeout=DB_TIMEOUT)
-            if settings.auto_administrator_enabled:
-                creator_name = creator_agent.display_name or creator_agent.name
-                await asyncio.wait_for(
-                    crud.thread_settings_set_creator_admin(db, t.id, creator_agent.id, creator_name),
-                    timeout=DB_TIMEOUT,
-                )
-                await asyncio.wait_for(
-                    crud._set_agent_activity(db, creator_agent.id, "thread_create", touch_heartbeat=True),
-                    timeout=DB_TIMEOUT,
-                )
+            await asyncio.wait_for(
+                crud._set_agent_activity(db, creator_agent.id, "thread_create", touch_heartbeat=True),
+                timeout=DB_TIMEOUT,
+            )
 
         sync = await asyncio.wait_for(
             crud.issue_reply_token(db, thread_id=t.id, agent_id=creator_agent.id if creator_agent else None),
