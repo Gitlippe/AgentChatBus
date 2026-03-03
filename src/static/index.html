@@ -622,6 +622,28 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
           if (p.thread_id === activeThreadId) await loadNewMessages();
           await refreshThreads();  // update sidebar counts
         }
+        if (ev.type === 'msg.edit' && p.thread_id === activeThreadId) {
+          // Update the bubble content in-place and show/refresh the "edited" indicator
+          const row = document.querySelector(`[data-msg-id="${p.msg_id}"]`);
+          if (row) {
+            const bubbleEl = row.querySelector('.bubble-v2');
+            if (bubbleEl) {
+              bubbleEl.innerHTML = '';
+              window.AcbMessageRenderer.renderMessageContent(bubbleEl, p.content, null);
+            }
+            let indicator = row.querySelector('.msg-edited-indicator');
+            if (!indicator) {
+              indicator = document.createElement('span');
+              indicator.className = 'msg-edited-indicator';
+              indicator.setAttribute('onclick', 'window.AcbMsgEditHistory(this)');
+              indicator.setAttribute('data-msg-id', p.msg_id);
+              const tail = row.querySelector('acb-message-tail-meta') || row.querySelector('.msg-reactions');
+              if (tail) tail.before(indicator);
+            }
+            indicator.title = `Edited (v${p.version})`;
+            indicator.textContent = 'edited';
+          }
+        }
         if (ev.type === 'thread.new' || ev.type === 'thread.state' || ev.type === 'thread.closed' || ev.type === 'thread.archived' || ev.type === 'thread.deleted') {
           await refreshThreads();
           if (ev.type === 'thread.deleted' && p.thread_id === activeThreadId) {
@@ -1132,6 +1154,7 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
       row.className = `msg-row ${isHuman ? 'msg-row-right' : 'msg-row-left'}`;
       row.setAttribute('data-author-id', String(m.author_id ?? authorLabel));
       row.setAttribute('data-seq', String(m.seq));
+      row.setAttribute('data-msg-id', String(m.id ?? ''));
 
       // Check if this message has mentions (look in metadata if string/object)
       let metaObj = parseMetadata(m.metadata);
@@ -1165,6 +1188,11 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
         ? `<div class="msg-reply-quote" title="In reply to message ${esc(m.reply_to_msg_id)}">&#8617; In reply to: <em>${esc(m.reply_to_msg_id.slice(0, 8))}…</em></div>`
         : '';
 
+      // Edit indicator (UP-21)
+      const editedIndicatorHtml = m.edited_at
+        ? `<span class="msg-edited-indicator" title="Edited ${fmtTime(m.edited_at)} (v${m.edit_version})" onclick="window.AcbMsgEditHistory(this)" data-msg-id="${esc(m.id)}">edited</span>`
+        : '';
+
       row.innerHTML = `
       <div class="msg-avatar" style="background:${bgAlpha};color:${color};border:1px solid ${color}44">${avatarEmoji}</div>
       <div class="msg-col">
@@ -1176,9 +1204,13 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
           <button class="msg-copy-btn" title="Copy message" aria-label="Copy message content" onclick="window.AcbCopyMsg(this)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
+          <button class="msg-edit-btn toolbar-btn" title="Edit message" aria-label="Edit message" onclick="window.AcbMsgEditStart(this)" data-msg-id="${esc(m.id)}" data-author="${esc(m.author)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
         </div>
         ${replyQuoteHtml}
         <div class="bubble-v2" style="border-color:${color}55;${isHuman ? 'border-right-color' : 'border-left-color'}:${color}"></div>
+        ${editedIndicatorHtml}
         ${isAgentMessage ? '<acb-message-tail-meta></acb-message-tail-meta>' : ''}
         <div class="msg-reactions"></div>
       </div>`;
@@ -1486,6 +1518,155 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
     async function submitSettings() {
       return window.AcbModals.submitSettings(api);
     }
+
+    // ==============================================================================================
+    // Message Edit (UP-21)
+    // ==============================================================================================
+
+    // Start inline editing: replace bubble content with a textarea + Save/Cancel buttons
+    window.AcbMsgEditStart = function(btn) {
+      const row = btn.closest('.msg-row');
+      if (!row) return;
+      const msgId = btn.getAttribute('data-msg-id');
+      const author = btn.getAttribute('data-author');
+      const bubbleEl = row.querySelector('.bubble-v2');
+      if (!bubbleEl || row.classList.contains('msg-editing')) return;
+
+      row.classList.add('msg-editing');
+      btn.disabled = true;
+
+      const originalContent = bubbleEl.innerText || bubbleEl.textContent;
+      bubbleEl.dataset.originalContent = originalContent;
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'msg-edit-textarea';
+      textarea.value = originalContent;
+      textarea.rows = Math.max(3, Math.round(originalContent.length / 80));
+
+      const actions = document.createElement('div');
+      actions.className = 'msg-edit-actions';
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'msg-edit-save-btn';
+      saveBtn.textContent = 'Save';
+      saveBtn.onclick = async () => {
+        const newContent = textarea.value.trim();
+        if (!newContent) return;
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+        try {
+          const resp = await api(`/api/messages/${msgId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: newContent, edited_by: author }),
+          });
+          if (resp.no_change) {
+            window.AcbMsgEditCancel(row);
+            return;
+          }
+          // Update bubble in-place
+          bubbleEl.innerHTML = '';
+          window.AcbMessageRenderer.renderMessageContent(bubbleEl, newContent, null);
+          // Refresh/add edited indicator
+          let indicator = row.querySelector('.msg-edited-indicator');
+          if (!indicator) {
+            indicator = document.createElement('span');
+            indicator.className = 'msg-edited-indicator';
+            indicator.setAttribute('data-msg-id', msgId);
+            indicator.setAttribute('onclick', 'window.AcbMsgEditHistory(this)');
+            const tail = row.querySelector('acb-message-tail-meta') || row.querySelector('.msg-reactions');
+            if (tail) tail.before(indicator);
+          }
+          indicator.title = `Edited (v${resp.version})`;
+          indicator.textContent = 'edited';
+          window.AcbMsgEditCancel(row);
+        } catch (err) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save';
+          console.error('[msg_edit] save failed', err);
+        }
+      };
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'msg-edit-cancel-btn';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.onclick = () => window.AcbMsgEditCancel(row);
+
+      actions.appendChild(saveBtn);
+      actions.appendChild(cancelBtn);
+
+      bubbleEl.innerHTML = '';
+      bubbleEl.appendChild(textarea);
+      bubbleEl.appendChild(actions);
+      textarea.focus();
+    };
+
+    // Cancel inline editing: restore original bubble content
+    window.AcbMsgEditCancel = function(row) {
+      if (!row) return;
+      row.classList.remove('msg-editing');
+      const editBtn = row.querySelector('.msg-edit-btn');
+      if (editBtn) editBtn.disabled = false;
+      const bubbleEl = row.querySelector('.bubble-v2');
+      if (!bubbleEl) return;
+      const original = bubbleEl.dataset.originalContent || '';
+      bubbleEl.innerHTML = '';
+      window.AcbMessageRenderer.renderMessageContent(bubbleEl, original, null);
+      delete bubbleEl.dataset.originalContent;
+    };
+
+    // Show edit history modal for a message
+    window.AcbMsgEditHistory = async function(el) {
+      const msgId = el.getAttribute('data-msg-id');
+      if (!msgId) return;
+      let data;
+      try {
+        data = await api(`/api/messages/${msgId}/history`);
+      } catch (err) {
+        console.error('[msg_edit_history] fetch failed', err);
+        return;
+      }
+      const modal = document.createElement('acb-modal-shell');
+      modal.setAttribute('title', 'Edit History');
+      document.body.appendChild(modal);
+
+      const container = document.createElement('div');
+      container.className = 'msg-edit-history-modal';
+
+      if (!data.edits || data.edits.length === 0) {
+        const p = document.createElement('p');
+        p.style.cssText = 'opacity:0.6; font-size:0.85rem; margin:0;';
+        p.textContent = 'No edit history.';
+        container.appendChild(p);
+      } else {
+        data.edits.slice().reverse().forEach((edit, idx) => {
+          const entry = document.createElement('div');
+          entry.className = 'msg-edit-history-entry';
+          entry.innerHTML = `
+            <div class="msg-edit-history-meta">
+              <span class="msg-edit-history-version">v${edit.version}</span>
+              <span class="msg-edit-history-by">${esc(edit.edited_by)}</span>
+              <span class="msg-edit-history-time">${fmtTime(edit.created_at)}</span>
+            </div>
+            <div class="msg-edit-history-content"><del>${esc(edit.old_content)}</del></div>`;
+          container.appendChild(entry);
+        });
+        const current = document.createElement('div');
+        current.className = 'msg-edit-history-entry msg-edit-history-current';
+        current.innerHTML = `
+          <div class="msg-edit-history-meta">
+            <span class="msg-edit-history-version">current (v${data.edit_version})</span>
+          </div>
+          <div class="msg-edit-history-content">${esc(data.current_content)}</div>`;
+        container.prepend(current);
+      }
+
+      if (typeof modal.setContent === 'function') {
+        modal.setContent(container);
+      } else {
+        modal.appendChild(container);
+      }
+    };
   </script>
 </body>
 

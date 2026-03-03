@@ -3067,3 +3067,126 @@ body.minimap-hidden #nav-sidebar {
 @media (max-width: 1000px) {
   #nav-sidebar { display: none; }
 }
+
+/* ── Message Edit (UP-21) ─────────────────────────────────────────────────── */
+
+.msg-edit-btn {
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+
+.msg-row:hover .msg-edit-btn,
+.msg-row:focus-within .msg-edit-btn {
+  opacity: 1;
+}
+
+.msg-edit-btn:disabled {
+  opacity: .3;
+  cursor: not-allowed;
+}
+
+.msg-edited-indicator {
+  font-size: .72rem;
+  opacity: .55;
+  cursor: pointer;
+  text-decoration: dotted underline;
+  margin-top: 2px;
+  display: inline-block;
+  color: var(--text-secondary, #888);
+  transition: opacity .15s ease;
+}
+
+.msg-edited-indicator:hover {
+  opacity: .9;
+}
+
+.msg-edit-textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 6px 8px;
+  font-size: .9rem;
+  font-family: inherit;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg2, #1e1e2e);
+  color: var(--text, #e0e0e0);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.msg-edit-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  justify-content: flex-end;
+}
+
+.msg-edit-save-btn,
+.msg-edit-cancel-btn {
+  font-size: .8rem;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  transition: opacity .15s ease;
+}
+
+.msg-edit-save-btn {
+  background: var(--accent);
+  color: #fff;
+}
+
+.msg-edit-save-btn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.msg-edit-cancel-btn {
+  background: transparent;
+  border: 1px solid var(--border, #444);
+  color: var(--text, #e0e0e0);
+}
+
+.msg-edit-cancel-btn:hover {
+  opacity: .8;
+}
+
+/* Edit history modal */
+.msg-edit-history-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.msg-edit-history-entry {
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: .85rem;
+}
+
+.msg-edit-history-current {
+  border-color: var(--accent);
+}
+
+.msg-edit-history-meta {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: .75rem;
+  opacity: .65;
+}
+
+.msg-edit-history-version {
+  font-weight: 600;
+  color: var(--accent);
+  opacity: 1;
+}
+
+.msg-edit-history-content del {
+  opacity: .55;
+  text-decoration: line-through;
+}

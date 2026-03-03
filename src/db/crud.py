@@ -13,7 +13,7 @@ from typing import Optional
 
 import aiosqlite
 
-from src.db.models import Thread, Message, AgentInfo, Event, ThreadTemplate, ThreadSettings, Reaction
+from src.db.models import Thread, Message, AgentInfo, Event, ThreadTemplate, ThreadSettings, Reaction, MessageEdit
 from src.config import (
     AGENT_HEARTBEAT_TIMEOUT,
     RATE_LIMIT_MSG_PER_MINUTE,
@@ -1279,6 +1279,8 @@ def _row_to_message(row: aiosqlite.Row) -> Message:
         author_name = row["author"]
     priority = row["priority"] if "priority" in keys else "normal"
     reply_to_msg_id = row["reply_to_msg_id"] if "reply_to_msg_id" in keys else None
+    edited_at_raw = row["edited_at"] if "edited_at" in keys else None
+    edit_version = row["edit_version"] if "edit_version" in keys else 0
 
     return Message(
         id=row["id"],
@@ -1293,6 +1295,8 @@ def _row_to_message(row: aiosqlite.Row) -> Message:
         author_name=author_name,
         priority=priority,
         reply_to_msg_id=reply_to_msg_id,
+        edited_at=_parse_dt(edited_at_raw) if edited_at_raw else None,
+        edit_version=edit_version if edit_version is not None else 0,
     )
 
 
@@ -2109,3 +2113,108 @@ async def msg_search(
         }
         for row in rows
     ]
+
+
+# ── Message edit / versioning (UP-21) ────────────────────────────────────────
+
+
+class MessageEditNoChangeError(Exception):
+    """Raised when msg_edit is called with content identical to the current content."""
+    def __init__(self, current_version: int) -> None:
+        self.current_version = current_version
+        super().__init__(f"Content unchanged (current version: {current_version})")
+
+
+def _row_to_message_edit(row: aiosqlite.Row) -> MessageEdit:
+    return MessageEdit(
+        id=row["id"],
+        message_id=row["message_id"],
+        old_content=row["old_content"],
+        edited_by=row["edited_by"],
+        version=row["version"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+async def msg_edit(
+    db: aiosqlite.Connection,
+    message_id: str,
+    new_content: str,
+    edited_by: str,
+) -> MessageEdit:
+    """Edit the content of a message, preserving full version history.
+
+    Only the original author or 'system' can edit a message.
+
+    If new_content is identical to the current content, raises
+    MessageEditNoChangeError (caller should return 200 with no_change=True).
+
+    Returns the newly created MessageEdit record.
+    """
+    msg = await msg_get(db, message_id)
+    if msg is None:
+        raise MessageNotFoundError(message_id)
+
+    if msg.author != edited_by and edited_by != "system":
+        raise PermissionError(
+            f"Only the original author ('{msg.author}') or 'system' can edit this message"
+        )
+
+    if msg.content == new_content:
+        raise MessageEditNoChangeError(msg.edit_version)
+
+    if CONTENT_FILTER_ENABLED:
+        check_content(new_content)
+
+    new_version = msg.edit_version + 1
+    edit_id = str(uuid.uuid4())
+    now = _now()
+
+    await db.execute(
+        """
+        INSERT INTO message_edits (id, message_id, old_content, edited_by, version, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (edit_id, message_id, msg.content, edited_by, new_version, now),
+    )
+
+    await db.execute(
+        """
+        UPDATE messages
+        SET content = ?, edited_at = ?, edit_version = ?
+        WHERE id = ?
+        """,
+        (new_content, now, new_version, message_id),
+    )
+    await db.commit()
+
+    await _emit_event(db, "msg.edit", msg.thread_id, {
+        "msg_id": message_id,
+        "thread_id": msg.thread_id,
+        "edited_by": edited_by,
+        "version": new_version,
+        "content": new_content[:200],
+    })
+
+    return MessageEdit(
+        id=edit_id,
+        message_id=message_id,
+        old_content=msg.content,
+        edited_by=edited_by,
+        version=new_version,
+        created_at=_parse_dt(now),
+    )
+
+
+async def msg_edit_history(
+    db: aiosqlite.Connection,
+    message_id: str,
+) -> list[MessageEdit]:
+    """Return all edit records for a message, ordered by version ascending."""
+    async with db.execute(
+        "SELECT * FROM message_edits WHERE message_id = ? ORDER BY version ASC",
+        (message_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [_row_to_message_edit(row) for row in rows]
+

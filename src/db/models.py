@@ -47,6 +47,19 @@ class Message:
     author_name: Optional[str] = None
     reply_to_msg_id: Optional[str] = None
     priority: str = "normal"  # normal | urgent | system (UP-16)
+    edited_at: Optional[datetime] = None   # last edit timestamp (UP-21)
+    edit_version: int = 0                  # number of edits applied (UP-21)
+
+
+@dataclass
+class MessageEdit:
+    """One entry in the append-only edit history for a message (UP-21)."""
+    id: str
+    message_id: str
+    old_content: str     # content before this edit was applied
+    edited_by: str       # author id or 'system'
+    version: int         # 1-based edit counter
+    created_at: datetime
 
 
 @dataclass

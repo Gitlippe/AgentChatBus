@@ -563,6 +563,39 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["query"],
             },
         ),
+        types.Tool(
+            name="msg_edit",
+            description=(
+                "Edit the content of an existing message. "
+                "Only the original author or 'system' can edit. "
+                "The edited_by value is deduced from the connected agent identity. "
+                "Preserves full version history in message_edits table. "
+                "Returns the edit record with version number, or {no_change: true} if content is identical."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_id":  {"type": "string", "description": "ID of the message to edit."},
+                    "new_content": {"type": "string", "description": "New content for the message."},
+                },
+                "required": ["message_id", "new_content"],
+            },
+        ),
+        types.Tool(
+            name="msg_edit_history",
+            description=(
+                "Retrieve the full edit history of a message. "
+                "Returns all previous versions in chronological order (oldest first). "
+                "Each entry contains old_content, edited_by, version, and created_at."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message_id": {"type": "string", "description": "ID of the message."},
+                },
+                "required": ["message_id"],
+            },
+        ),
     ]
 
 

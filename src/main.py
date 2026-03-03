@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 from mcp.server.sse import SseServerTransport
 from starlette.routing import Mount
 
-from src.config import HOST, PORT, DB_PATH, get_config_dict, save_config_dict, ADMIN_TOKEN
+from src.config import HOST, PORT, get_config_dict, save_config_dict, ADMIN_TOKEN
 from src.db.database import get_db, close_db, SCHEMA_VERSION
 from src.db import crud
 from src.db.crud import (
@@ -38,6 +38,7 @@ from src.db.crud import (
     ReplyTokenExpiredError,
     ReplyTokenReplayError,
     MessageNotFoundError,
+    MessageEditNoChangeError,
 )
 from src.config import THREAD_TIMEOUT_ENABLED, THREAD_TIMEOUT_MINUTES, THREAD_TIMEOUT_SWEEP_INTERVAL, RELOAD_ENABLED
 from src.mcp_server import server as mcp_server, _session_language
@@ -164,18 +165,6 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Database operation timeout (seconds)
 # Support environment variable override via AGENTCHATBUS_DB_TIMEOUT
 DB_TIMEOUT = int(os.getenv("AGENTCHATBUS_DB_TIMEOUT", "5"))
-
-
-def _runtime_diag_payload() -> dict[str, object]:
-    """Return runtime diagnostics for error payloads.
-
-    Intentionally enabled in default mode to help diagnose multi-instance/path mismatches.
-    """
-    return {
-        "pid": os.getpid(),
-        "port": PORT,
-        "db_path": DB_PATH,
-    }
 
 # Server start time — set in lifespan(), used by /api/metrics (UP-22)
 _start_time: datetime | None = None
@@ -882,6 +871,8 @@ async def api_messages(
             "metadata": m.metadata,
             "priority": m.priority,
             "reply_to_msg_id": m.reply_to_msg_id,
+            "edited_at": m.edited_at.isoformat() if m.edited_at else None,
+            "edit_version": m.edit_version,
             "reactions": reactions_map.get(m.id, []),
         }
         for m in msgs
@@ -960,6 +951,77 @@ async def api_get_reactions(message_id: str):
         }
         for r in reactions
     ]
+
+
+# ─────────────────────────────────────────────
+# Message Edit API (UP-21)
+# ─────────────────────────────────────────────
+
+class MessageEditRequest(BaseModel):
+    content: str
+    edited_by: str  # "trust the caller" — no auth until SEC-JWT-01
+
+
+@app.put("/api/messages/{message_id}", status_code=200)
+async def api_edit_message(message_id: str, body: MessageEditRequest):
+    """Edit a message's content. Only the original author or 'system' can edit.
+    Returns {no_change: true, version: N} if content is identical (idempotent).
+    """
+    if not body.content or not body.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    if not body.edited_by or not body.edited_by.strip():
+        raise HTTPException(status_code=400, detail="edited_by must not be empty")
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        edit = await asyncio.wait_for(
+            crud.msg_edit(db, message_id, body.content, body.edited_by),
+            timeout=DB_TIMEOUT,
+        )
+    except MessageEditNoChangeError as e:
+        return {"no_change": True, "version": e.current_version}
+    except MessageNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Message '{message_id}' not found")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ContentFilterError as e:
+        raise HTTPException(status_code=400, detail=f"Content blocked by filter: {e}")
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    return {
+        "msg_id": message_id,
+        "version": edit.version,
+        "edited_at": edit.created_at.isoformat(),
+        "edited_by": edit.edited_by,
+    }
+
+
+@app.get("/api/messages/{message_id}/history")
+async def api_message_edit_history(message_id: str):
+    """Return the full edit history for a message, ordered by version ascending."""
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        msg, edits = await asyncio.gather(
+            asyncio.wait_for(crud.msg_get(db, message_id), timeout=DB_TIMEOUT),
+            asyncio.wait_for(crud.msg_edit_history(db, message_id), timeout=DB_TIMEOUT),
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    if msg is None:
+        raise HTTPException(status_code=404, detail=f"Message '{message_id}' not found")
+    return {
+        "message_id": message_id,
+        "current_content": msg.content,
+        "edit_version": msg.edit_version,
+        "edits": [
+            {
+                "version": e.version,
+                "old_content": e.old_content,
+                "edited_by": e.edited_by,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in edits
+        ],
+    }
 
 
 # ─────────────────────────────────────────────
@@ -1069,24 +1131,10 @@ async def api_thread_agents(thread_id: str):
         db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
         t = await asyncio.wait_for(crud.thread_get(db, thread_id), timeout=DB_TIMEOUT)
         if t is None:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "message": "Thread not found",
-                    "thread_id": thread_id,
-                    **_runtime_diag_payload(),
-                },
-            )
+            raise HTTPException(status_code=404, detail="Thread not found")
         agents = await asyncio.wait_for(crud.thread_agents_list(db, thread_id), timeout=DB_TIMEOUT)
     except asyncio.TimeoutError:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "Database operation timeout",
-                "thread_id": thread_id,
-                **_runtime_diag_payload(),
-            },
-        )
+        raise HTTPException(status_code=503, detail="Database operation timeout")
 
     import json as _json
     result = []
@@ -2425,7 +2473,8 @@ if __name__ == "__main__":
         reload_includes=["src/*.py", "src/db/*.py"],
         reload_excludes=["src/tools/*.py"],
         log_level="info",
-        # Do not wait on Ctrl+C; terminate immediately even if SSE/long-poll
-        # connections are still open.
-        timeout_graceful_shutdown=0,
+        # Force-close lingering SSE / long-poll connections after 3 s when
+        # Ctrl+C (SIGINT) is received. Without this, uvicorn waits forever
+        # for the MCP SSE stream to disconnect naturally.
+        timeout_graceful_shutdown=3,
     )
