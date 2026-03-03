@@ -818,8 +818,6 @@ class ThreadCreate(BaseModel):
     metadata: dict | None = None
     system_prompt: str | None = None
     template: str | None = None   # Template ID for defaults (UP-18)
-    agent_id: str | None = None   # Optional creator agent ID for admin assignment
-    token: str | None = None      # Optional creator token (required when agent_id is provided)
 
 
 class TemplateCreate(BaseModel):
@@ -973,19 +971,17 @@ async def api_create_thread(body: ThreadCreate):
     try:
         db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
 
+        # Infer creator automatically. Prefer online active agents; if none are
+        # currently online, fall back to the most recently active registered agent.
         creator_agent = None
-        if body.agent_id:
-            if not body.token:
-                raise HTTPException(status_code=401, detail="token is required when agent_id is provided")
-            token_valid = await asyncio.wait_for(
-                crud.agent_verify_token(db, body.agent_id, body.token),
-                timeout=DB_TIMEOUT,
+        agents = await asyncio.wait_for(crud.agent_list(db), timeout=DB_TIMEOUT)
+        online_agents = [a for a in agents if a.is_online]
+        candidate_agents = online_agents if online_agents else agents
+        if candidate_agents:
+            creator_agent = max(
+                candidate_agents,
+                key=lambda a: (a.last_activity_time or a.last_heartbeat, a.last_heartbeat),
             )
-            if not token_valid:
-                raise HTTPException(status_code=401, detail="Invalid agent_id/token")
-            creator_agent = await asyncio.wait_for(crud.agent_get(db, body.agent_id), timeout=DB_TIMEOUT)
-            if creator_agent is None:
-                raise HTTPException(status_code=404, detail="Creator agent not found")
 
         t = await asyncio.wait_for(
             crud.thread_create(db, body.topic, body.metadata, body.system_prompt, template=body.template),

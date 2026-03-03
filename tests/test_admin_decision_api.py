@@ -38,16 +38,6 @@ def _register_agent(client: httpx.Client) -> str:
     return resp.json()["agent_id"]
 
 
-def _register_agent_with_token(client: httpx.Client) -> tuple[str, str]:
-    resp = client.post(
-        "/api/agents/register",
-        json={"ide": "VS Code", "model": "GPT-5.3-Codex"},
-    )
-    assert resp.status_code == 200, resp.text
-    payload = resp.json()
-    return payload["agent_id"], payload["token"]
-
-
 def test_admin_decision_switch_then_keep():
     with _build_client() as client:
         _require_server_or_skip(client)
@@ -115,14 +105,33 @@ def test_admin_decision_switch_replaces_previous_admin():
 def test_thread_creator_agent_is_admin():
     with _build_client() as client:
         _require_server_or_skip(client)
-        creator_id, creator_token = _register_agent_with_token(client)
+        creator_id = _register_agent(client)
 
         create_resp = client.post(
             "/api/threads",
             json={
                 "topic": f"creator-admin-{uuid.uuid4()}",
-                "agent_id": creator_id,
-                "token": creator_token,
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        thread_id = create_resp.json()["id"]
+
+        admin_resp = client.get(f"/api/threads/{thread_id}/admin")
+        assert admin_resp.status_code == 200, admin_resp.text
+        payload = admin_resp.json()
+        assert payload["admin_id"] == creator_id
+        assert payload["admin_type"] == "creator"
+
+
+def test_thread_creator_auto_assigns_online_agent_without_credentials():
+    with _build_client() as client:
+        _require_server_or_skip(client)
+        creator_id = _register_agent(client)
+
+        create_resp = client.post(
+            "/api/threads",
+            json={
+                "topic": f"creator-auto-infer-{uuid.uuid4()}",
             },
         )
         assert create_resp.status_code == 201, create_resp.text
