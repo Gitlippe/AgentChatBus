@@ -320,6 +320,58 @@ async def _admin_coordinator_loop() -> None:
                     candidate_label = _agent_label(candidate_agent, candidate_agent.id)
                     candidate_emoji = _agent_emoji(candidate_agent.id)
 
+                    # Avoid flooding repeated cards/notices while preserving wait-state rows.
+                    # We intentionally do not clear thread_wait_states here; msg_wait should
+                    # be the source of truth for entering/exiting waiting state.
+                    now_utc = datetime.now(timezone.utc)
+                    recent_ui_events: list[tuple[str, dict, datetime | None]] = []
+                    async with db.execute(
+                        """
+                        SELECT metadata, created_at
+                        FROM messages
+                        WHERE thread_id = ? AND author = 'system' AND role = 'system'
+                        ORDER BY seq DESC
+                        LIMIT 80
+                        """,
+                        (thread_id,),
+                    ) as cur:
+                        recent_rows = await cur.fetchall()
+
+                    for row in recent_rows:
+                        meta = _parse_metadata_dict(row["metadata"])
+                        if not isinstance(meta, dict):
+                            continue
+                        ui_type = str(meta.get("ui_type") or "").strip()
+                        if not ui_type:
+                            continue
+                        created_at_dt: datetime | None = None
+                        raw_created_at = row["created_at"]
+                        if isinstance(raw_created_at, str):
+                            try:
+                                created_at_dt = datetime.fromisoformat(raw_created_at)
+                            except ValueError:
+                                created_at_dt = None
+                        recent_ui_events.append((ui_type, meta, created_at_dt))
+
+                    dedupe_window_seconds = max(15, int(ts.timeout_seconds))
+
+                    def _has_pending_prompt(ui_type: str) -> bool:
+                        return any(
+                            e_ui == ui_type and str(e_meta.get("decision_status") or "") != "resolved"
+                            for (e_ui, e_meta, _e_created_at) in recent_ui_events
+                        )
+
+                    def _has_recent_ui_event(ui_type: str) -> bool:
+                        for e_ui, _e_meta, e_created_at in recent_ui_events:
+                            if e_ui != ui_type:
+                                continue
+                            if e_created_at is None:
+                                return True
+                            age = (now_utc - e_created_at).total_seconds()
+                            if age <= dedupe_window_seconds:
+                                return True
+                        return False
+
                     # Keep legacy switch-confirmation support for non-default fallback
                     # paths (for example: single online participant differs from current admin).
                     needs_switch_confirmation = bool(current_admin_id and candidate_agent.id != current_admin_id)
@@ -335,6 +387,13 @@ async def _admin_coordinator_loop() -> None:
                     )
 
                     if single_online_current_admin:
+                        if _has_pending_prompt("admin_takeover_confirmation_required"):
+                            logger.debug(
+                                "Skip duplicate admin takeover confirmation for thread %s (pending exists)",
+                                thread_id,
+                            )
+                            continue
+
                         takeover_content = (
                             f"Auto Administrator Timeout reached after {int(elapsed)} seconds. "
                             f"Only administrator {current_admin_emoji} {current_admin_label} is online and waiting. "
@@ -375,75 +434,21 @@ async def _admin_coordinator_loop() -> None:
                             timeout=DB_TIMEOUT,
                         )
                     elif participant_count > 1:
-                        human_notice = (
-                            f"Auto Administrator Timeout triggered after {int(elapsed)} seconds. "
-                            "All online participants are currently waiting in msg_wait. "
-                            "System has notified administrator coordination."
-                        )
-                        human_meta = {
-                            "ui_type": "admin_coordination_timeout_notice",
-                            "visibility": "human_only",
-                            "thread_id": thread_id,
-                            "reason": "all_agents_waiting",
-                            "mode": "multi_agent",
-                            "current_admin_id": current_admin_id,
-                            "current_admin_name": current_admin_label,
-                            "current_admin_emoji": current_admin_emoji,
-                            "timeout_seconds": int(elapsed),
-                            "online_agents_count": participant_count,
-                            "triggered_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        await asyncio.wait_for(
-                            crud._msg_create_system(
-                                db,
-                                thread_id=thread_id,
-                                content=human_notice,
-                                metadata=human_meta,
-                                clear_auto_admin=False,
-                            ),
-                            timeout=DB_TIMEOUT,
-                        )
-
-                        if current_admin_online_waiting:
-                            takeover_instruction = (
-                                f"Coordinator alert: all online agents are waiting in msg_wait (timeout {int(elapsed)}s). "
-                                f"Administrator {current_admin_emoji} {current_admin_label} must coordinate now: "
-                                "continue working directly or communicate with human without waiting."
+                        if not _has_recent_ui_event("admin_coordination_timeout_notice"):
+                            human_notice = (
+                                f"Auto Administrator Timeout triggered after {int(elapsed)} seconds. "
+                                "All online participants are currently waiting in msg_wait. "
+                                "System has notified administrator coordination."
                             )
-                            takeover_instruction_meta = {
-                                "ui_type": "admin_coordination_takeover_instruction",
-                                "thread_id": thread_id,
-                                "reason": "all_agents_waiting",
-                                "handoff_target": current_admin_id,
-                                "target_admin_id": current_admin_id,
-                                "target_admin_name": current_admin_label,
-                                "target_admin_emoji": current_admin_emoji,
-                                "timeout_seconds": int(elapsed),
-                                "online_agents_count": participant_count,
-                                "triggered_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                            await asyncio.wait_for(
-                                crud._msg_create_system(
-                                    db,
-                                    thread_id=thread_id,
-                                    content=takeover_instruction,
-                                    metadata=takeover_instruction_meta,
-                                    clear_auto_admin=False,
-                                ),
-                                timeout=DB_TIMEOUT,
-                            )
-                        else:
-                            risk_content = (
-                                "Thread coordination warning: the current administrator is not online/waiting. "
-                                "Agents in this thread may all be offline. Please check agent working status."
-                            )
-                            risk_meta = {
-                                "ui_type": "agent_offline_risk_notice",
+                            human_meta = {
+                                "ui_type": "admin_coordination_timeout_notice",
                                 "visibility": "human_only",
                                 "thread_id": thread_id,
-                                "reason": "no_actionable_admin",
+                                "reason": "all_agents_waiting",
+                                "mode": "multi_agent",
                                 "current_admin_id": current_admin_id,
                                 "current_admin_name": current_admin_label,
+                                "current_admin_emoji": current_admin_emoji,
                                 "timeout_seconds": int(elapsed),
                                 "online_agents_count": participant_count,
                                 "triggered_at": datetime.now(timezone.utc).isoformat(),
@@ -452,13 +457,77 @@ async def _admin_coordinator_loop() -> None:
                                 crud._msg_create_system(
                                     db,
                                     thread_id=thread_id,
-                                    content=risk_content,
-                                    metadata=risk_meta,
+                                    content=human_notice,
+                                    metadata=human_meta,
                                     clear_auto_admin=False,
                                 ),
                                 timeout=DB_TIMEOUT,
                             )
+
+                        if current_admin_online_waiting:
+                            if not _has_recent_ui_event("admin_coordination_takeover_instruction"):
+                                takeover_instruction = (
+                                    f"Coordinator alert: all online agents are waiting in msg_wait (timeout {int(elapsed)}s). "
+                                    f"Administrator {current_admin_emoji} {current_admin_label} must coordinate now: "
+                                    "continue working directly or communicate with human without waiting."
+                                )
+                                takeover_instruction_meta = {
+                                    "ui_type": "admin_coordination_takeover_instruction",
+                                    "thread_id": thread_id,
+                                    "reason": "all_agents_waiting",
+                                    "handoff_target": current_admin_id,
+                                    "target_admin_id": current_admin_id,
+                                    "target_admin_name": current_admin_label,
+                                    "target_admin_emoji": current_admin_emoji,
+                                    "timeout_seconds": int(elapsed),
+                                    "online_agents_count": participant_count,
+                                    "triggered_at": datetime.now(timezone.utc).isoformat(),
+                                }
+                                await asyncio.wait_for(
+                                    crud._msg_create_system(
+                                        db,
+                                        thread_id=thread_id,
+                                        content=takeover_instruction,
+                                        metadata=takeover_instruction_meta,
+                                        clear_auto_admin=False,
+                                    ),
+                                    timeout=DB_TIMEOUT,
+                                )
+                        else:
+                            if not _has_recent_ui_event("agent_offline_risk_notice"):
+                                risk_content = (
+                                    "Thread coordination warning: the current administrator is not online/waiting. "
+                                    "Agents in this thread may all be offline. Please check agent working status."
+                                )
+                                risk_meta = {
+                                    "ui_type": "agent_offline_risk_notice",
+                                    "visibility": "human_only",
+                                    "thread_id": thread_id,
+                                    "reason": "no_actionable_admin",
+                                    "current_admin_id": current_admin_id,
+                                    "current_admin_name": current_admin_label,
+                                    "timeout_seconds": int(elapsed),
+                                    "online_agents_count": participant_count,
+                                    "triggered_at": datetime.now(timezone.utc).isoformat(),
+                                }
+                                await asyncio.wait_for(
+                                    crud._msg_create_system(
+                                        db,
+                                        thread_id=thread_id,
+                                        content=risk_content,
+                                        metadata=risk_meta,
+                                        clear_auto_admin=False,
+                                    ),
+                                    timeout=DB_TIMEOUT,
+                                )
                     elif needs_switch_confirmation:
+                        if _has_pending_prompt("admin_switch_confirmation_required"):
+                            logger.debug(
+                                "Skip duplicate admin switch confirmation for thread %s (pending exists)",
+                                thread_id,
+                            )
+                            continue
+
                         confirmation_content = (
                             f"Auto Administrator Timeout reached after {int(elapsed)} seconds while all online participants were in msg_wait. "
                             f"Current admin: {current_admin_emoji} {current_admin_label}. "
@@ -502,11 +571,6 @@ async def _admin_coordinator_loop() -> None:
                             ),
                             timeout=DB_TIMEOUT,
                         )
-
-                    await asyncio.wait_for(
-                        crud.thread_wait_clear_thread(db, thread_id),
-                        timeout=DB_TIMEOUT,
-                    )
 
                     logger.info(
                         "Sent admin confirmation prompt for thread %s: candidate=%s online_count=%s",

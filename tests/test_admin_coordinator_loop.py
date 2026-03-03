@@ -166,6 +166,11 @@ async def test_admin_coordinator_multi_agent_emits_notice_and_admin_instruction(
         instruction_meta = instruction_msgs[0].metadata or ""
         assert '"handoff_target": "' + admin.id + '"' in instruction_meta
 
+        states = await crud.thread_wait_states_grouped(db)
+        assert thread.id in states
+        assert admin.id in states[thread.id]
+        assert peer.id in states[thread.id]
+
         assert any(
             (m.metadata and "\"visibility\": \"human_only\"" in m.metadata)
             for m in msgs
@@ -226,5 +231,9 @@ async def test_admin_coordinator_single_online_current_admin_skips_confirmation(
         takeover_meta = takeover_msgs[0].metadata or ""
         assert '"visibility": "human_only"' in takeover_meta
         assert '"current_admin_id": "' + admin.id + '"' in takeover_meta
+
+        states = await crud.thread_wait_states_grouped(db)
+        assert thread.id in states
+        assert admin.id in states[thread.id]
     finally:
         await db.close()
