@@ -320,61 +320,71 @@ async def _admin_coordinator_loop() -> None:
                     candidate_label = _agent_label(candidate_agent, candidate_agent.id)
                     candidate_emoji = _agent_emoji(candidate_agent.id)
 
-                    if participant_count == 1:
-                        confirmation_content = (
-                            f"Auto Administrator Timeout reached after {int(elapsed)} seconds. "
-                            f"Only one online participant remains: {candidate_emoji} {candidate_label}. "
-                            "Human confirmation is required before changing administrator."
-                        )
-                    else:
-                        confirmation_content = (
-                            f"Auto Administrator Timeout reached after {int(elapsed)} seconds while all online participants were in msg_wait. "
-                            f"Current admin: {current_admin_emoji} {current_admin_label}. "
-                            f"Candidate admin: {candidate_emoji} {candidate_label}. "
-                            "Human confirmation is required before changing administrator."
-                        )
+                    # No-op switch path: when candidate is already the current admin,
+                    # a switch-confirmation card is not meaningful. Keep only the
+                    # human-only timeout notice for visibility.
+                    needs_switch_confirmation = bool(current_admin_id and candidate_agent.id != current_admin_id)
 
-                    confirmation_meta = {
-                        "ui_type": "admin_switch_confirmation_required",
-                        "visibility": "human_only",
-                        "thread_id": thread_id,
-                        "reason": "all_agents_waiting",
-                        "mode": "single_agent" if participant_count == 1 else "multi_agent",
-                        "current_admin_id": current_admin_id,
-                        "current_admin_name": current_admin_label,
-                        "current_admin_emoji": current_admin_emoji,
-                        "candidate_admin_id": candidate_agent.id,
-                        "candidate_admin_name": candidate_label,
-                        "candidate_admin_emoji": candidate_emoji,
-                        "timeout_seconds": int(elapsed),
-                        "online_agents_count": participant_count,
-                        "triggered_at": datetime.now(timezone.utc).isoformat(),
-                        "ui_buttons": [
-                            {
-                                "action": "switch",
-                                "label": f"Switch admin to {candidate_emoji} {candidate_label}",
-                            },
-                            {
-                                "action": "keep",
-                                "label": f"Keep {current_admin_emoji} {current_admin_label} as admin",
-                            },
-                        ],
-                    }
-                    await asyncio.wait_for(
-                        crud._msg_create_system(
-                            db,
-                            thread_id=thread_id,
-                            content=confirmation_content,
-                            metadata=confirmation_meta,
-                            clear_auto_admin=False,
-                        ),
-                        timeout=DB_TIMEOUT,
-                    )
+                    if needs_switch_confirmation:
+                        if participant_count == 1:
+                            confirmation_content = (
+                                f"Auto Administrator Timeout reached after {int(elapsed)} seconds. "
+                                f"Only one online participant remains: {candidate_emoji} {candidate_label}. "
+                                "Human confirmation is required before changing administrator."
+                            )
+                        else:
+                            confirmation_content = (
+                                f"Auto Administrator Timeout reached after {int(elapsed)} seconds while all online participants were in msg_wait. "
+                                f"Current admin: {current_admin_emoji} {current_admin_label}. "
+                                f"Candidate admin: {candidate_emoji} {candidate_label}. "
+                                "Human confirmation is required before changing administrator."
+                            )
+
+                        confirmation_meta = {
+                            "ui_type": "admin_switch_confirmation_required",
+                            "visibility": "human_only",
+                            "thread_id": thread_id,
+                            "reason": "all_agents_waiting",
+                            "mode": "single_agent" if participant_count == 1 else "multi_agent",
+                            "current_admin_id": current_admin_id,
+                            "current_admin_name": current_admin_label,
+                            "current_admin_emoji": current_admin_emoji,
+                            "candidate_admin_id": candidate_agent.id,
+                            "candidate_admin_name": candidate_label,
+                            "candidate_admin_emoji": candidate_emoji,
+                            "timeout_seconds": int(elapsed),
+                            "online_agents_count": participant_count,
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                            "ui_buttons": [
+                                {
+                                    "action": "switch",
+                                    "label": f"Switch admin to {candidate_emoji} {candidate_label}",
+                                },
+                                {
+                                    "action": "keep",
+                                    "label": f"Keep {current_admin_emoji} {current_admin_label} as admin",
+                                },
+                            ],
+                        }
+                        await asyncio.wait_for(
+                            crud._msg_create_system(
+                                db,
+                                thread_id=thread_id,
+                                content=confirmation_content,
+                                metadata=confirmation_meta,
+                                clear_auto_admin=False,
+                            ),
+                            timeout=DB_TIMEOUT,
+                        )
 
                     human_notice = (
                         f"Auto Administrator Timeout triggered after {int(elapsed)} seconds. "
                         "All online participants are currently waiting in msg_wait. "
-                        "Administrator switch now requires human confirmation."
+                        + (
+                            "Administrator switch now requires human confirmation."
+                            if needs_switch_confirmation
+                            else "Current administrator remains unchanged."
+                        )
                     )
                     human_meta = {
                         "ui_type": "admin_coordination_timeout_notice",
@@ -390,6 +400,7 @@ async def _admin_coordinator_loop() -> None:
                         "candidate_admin_emoji": candidate_emoji,
                         "timeout_seconds": int(elapsed),
                         "online_agents_count": participant_count,
+                        "switch_confirmation_required": needs_switch_confirmation,
                         "triggered_at": datetime.now(timezone.utc).isoformat(),
                     }
                     await asyncio.wait_for(

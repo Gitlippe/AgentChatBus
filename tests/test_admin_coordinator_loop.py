@@ -28,7 +28,7 @@ class _SleepBreaker:
 
 
 @pytest.mark.asyncio
-async def test_admin_coordinator_single_agent_emits_confirmation_and_human_notice(monkeypatch):
+async def test_admin_coordinator_single_agent_emits_human_notice_without_confirmation(monkeypatch):
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "single-agent-intervention")
@@ -65,13 +65,15 @@ async def test_admin_coordinator_single_agent_emits_confirmation_and_human_notic
             for m in msgs
             if m.metadata and '"ui_type": "admin_switch_confirmation_required"' in m.metadata
         ]
-        assert len(confirmation_msgs) == 1
-        assert '"candidate_admin_id": "' + agent.id + '"' in (confirmation_msgs[0].metadata or "")
+        assert len(confirmation_msgs) == 0
 
-        assert any(
-            (m.metadata and "\"visibility\": \"human_only\"" in m.metadata)
+        human_msgs = [
+            m
             for m in msgs
-        )
+            if m.metadata and '"ui_type": "admin_coordination_timeout_notice"' in m.metadata
+        ]
+        assert len(human_msgs) == 1
+        assert '"switch_confirmation_required": false' in (human_msgs[0].metadata or "")
     finally:
         await db.close()
 
@@ -159,5 +161,59 @@ async def test_admin_coordinator_multi_agent_emits_confirmation_without_switch(m
             (m.metadata and "\"visibility\": \"human_only\"" in m.metadata)
             for m in msgs
         )
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_admin_coordinator_single_online_current_admin_skips_confirmation(monkeypatch):
+    db = await _setup_db()
+    try:
+        thread = await crud.thread_create(db, "single-agent-current-admin")
+        admin = await crud.agent_register(db, ide="VS Code", model="GPT-5.3-Codex")
+
+        await crud.thread_settings_switch_admin(
+            db,
+            thread.id,
+            admin.id,
+            admin.display_name or admin.name or admin.id,
+        )
+        await crud.thread_settings_update(db, thread.id, timeout_seconds=30)
+
+        old_entered = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+        await db.execute(
+            """
+            INSERT INTO thread_wait_states (thread_id, agent_id, entered_at, updated_at, timeout_ms)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (thread.id, admin.id, old_entered, old_entered, 120000),
+        )
+        await db.commit()
+
+        sleep_breaker = _SleepBreaker()
+        monkeypatch.setattr(app_main.asyncio, "sleep", sleep_breaker)
+
+        async def _fake_get_db():
+            return db
+
+        monkeypatch.setattr(app_main, "get_db", _fake_get_db)
+
+        await app_main._admin_coordinator_loop()
+
+        msgs = await crud.msg_list(db, thread.id, after_seq=0, include_system_prompt=False)
+        confirmation_msgs = [
+            m
+            for m in msgs
+            if m.metadata and '"ui_type": "admin_switch_confirmation_required"' in m.metadata
+        ]
+        assert len(confirmation_msgs) == 0
+
+        human_msgs = [
+            m
+            for m in msgs
+            if m.metadata and '"ui_type": "admin_coordination_timeout_notice"' in m.metadata
+        ]
+        assert len(human_msgs) == 1
+        assert '"switch_confirmation_required": false' in (human_msgs[0].metadata or "")
     finally:
         await db.close()
