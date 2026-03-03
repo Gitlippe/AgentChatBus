@@ -91,7 +91,7 @@
   <script src="/static/js/components/acb-thread-header.js?v=2"></script>
   <script src="/static/js/components/acb-thread-item.js?v=2"></script>
   <script src="/static/js/components/acb-message-tail-meta.js?v=1"></script>
-  <script src="/static/js/components/acb-admin-switch-card.js?v=2"></script>
+  <script src="/static/js/components/acb-admin-switch-card.js?v=3"></script>
   <script src="/static/js/components/acb-compose-shell.js?v=3"></script>
   <script src="/static/js/components/acb-agent-status-shell.js?v=2"></script>
   <script src="/static/js/shared-threads.js?v=2"></script>
@@ -735,7 +735,10 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
 
         // Frontend fallback: still render legacy human-decision admin switch cards
         // if old messages exist in history.
-        if (metaObj && metaObj.ui_type === 'admin_switch_confirmation_required') {
+        if (metaObj && (
+          metaObj.ui_type === 'admin_switch_confirmation_required'
+          || metaObj.ui_type === 'admin_takeover_confirmation_required'
+        )) {
           const card = document.createElement('acb-admin-switch-card');
           if (typeof card.setData === 'function') {
             card.setData({

@@ -320,32 +320,158 @@ async def _admin_coordinator_loop() -> None:
                     candidate_label = _agent_label(candidate_agent, candidate_agent.id)
                     candidate_emoji = _agent_emoji(candidate_agent.id)
 
-                    # No-op switch path: when candidate is already the current admin,
-                    # a switch-confirmation card is not meaningful. Keep only the
-                    # human-only timeout notice for visibility.
+                    # Keep legacy switch-confirmation support for non-default fallback
+                    # paths (for example: single online participant differs from current admin).
                     needs_switch_confirmation = bool(current_admin_id and candidate_agent.id != current_admin_id)
+                    current_admin_online_waiting = bool(
+                        current_admin_id
+                        and current_admin_id in thread_participant_ids
+                        and current_admin_id in online_wait_states
+                    )
+                    single_online_current_admin = bool(
+                        participant_count == 1
+                        and current_admin_id
+                        and candidate_agent.id == current_admin_id
+                    )
 
-                    if needs_switch_confirmation:
-                        if participant_count == 1:
-                            confirmation_content = (
-                                f"Auto Administrator Timeout reached after {int(elapsed)} seconds. "
-                                f"Only one online participant remains: {candidate_emoji} {candidate_label}. "
-                                "Human confirmation is required before changing administrator."
+                    if single_online_current_admin:
+                        takeover_content = (
+                            f"Auto Administrator Timeout reached after {int(elapsed)} seconds. "
+                            f"Only administrator {current_admin_emoji} {current_admin_label} is online and waiting. "
+                            "Do you want to ask the administrator to take over and continue work now?"
+                        )
+                        takeover_meta = {
+                            "ui_type": "admin_takeover_confirmation_required",
+                            "visibility": "human_only",
+                            "thread_id": thread_id,
+                            "reason": "single_online_current_admin_waiting",
+                            "mode": "single_agent_current_admin",
+                            "current_admin_id": current_admin_id,
+                            "current_admin_name": current_admin_label,
+                            "current_admin_emoji": current_admin_emoji,
+                            "timeout_seconds": int(elapsed),
+                            "online_agents_count": participant_count,
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                            "ui_buttons": [
+                                {
+                                    "action": "takeover",
+                                    "label": "Require administrator to take over now",
+                                },
+                                {
+                                    "action": "cancel",
+                                    "label": "Cancel",
+                                    "tooltip": "Continue waiting for other offline agents; they may still be coding.",
+                                },
+                            ],
+                        }
+                        await asyncio.wait_for(
+                            crud._msg_create_system(
+                                db,
+                                thread_id=thread_id,
+                                content=takeover_content,
+                                metadata=takeover_meta,
+                                clear_auto_admin=False,
+                            ),
+                            timeout=DB_TIMEOUT,
+                        )
+                    elif participant_count > 1:
+                        human_notice = (
+                            f"Auto Administrator Timeout triggered after {int(elapsed)} seconds. "
+                            "All online participants are currently waiting in msg_wait. "
+                            "System has notified administrator coordination."
+                        )
+                        human_meta = {
+                            "ui_type": "admin_coordination_timeout_notice",
+                            "visibility": "human_only",
+                            "thread_id": thread_id,
+                            "reason": "all_agents_waiting",
+                            "mode": "multi_agent",
+                            "current_admin_id": current_admin_id,
+                            "current_admin_name": current_admin_label,
+                            "current_admin_emoji": current_admin_emoji,
+                            "timeout_seconds": int(elapsed),
+                            "online_agents_count": participant_count,
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        await asyncio.wait_for(
+                            crud._msg_create_system(
+                                db,
+                                thread_id=thread_id,
+                                content=human_notice,
+                                metadata=human_meta,
+                                clear_auto_admin=False,
+                            ),
+                            timeout=DB_TIMEOUT,
+                        )
+
+                        if current_admin_online_waiting:
+                            takeover_instruction = (
+                                f"Coordinator alert: all online agents are waiting in msg_wait (timeout {int(elapsed)}s). "
+                                f"Administrator {current_admin_emoji} {current_admin_label} must coordinate now: "
+                                "continue working directly or communicate with human without waiting."
+                            )
+                            takeover_instruction_meta = {
+                                "ui_type": "admin_coordination_takeover_instruction",
+                                "thread_id": thread_id,
+                                "reason": "all_agents_waiting",
+                                "handoff_target": current_admin_id,
+                                "target_admin_id": current_admin_id,
+                                "target_admin_name": current_admin_label,
+                                "target_admin_emoji": current_admin_emoji,
+                                "timeout_seconds": int(elapsed),
+                                "online_agents_count": participant_count,
+                                "triggered_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                            await asyncio.wait_for(
+                                crud._msg_create_system(
+                                    db,
+                                    thread_id=thread_id,
+                                    content=takeover_instruction,
+                                    metadata=takeover_instruction_meta,
+                                    clear_auto_admin=False,
+                                ),
+                                timeout=DB_TIMEOUT,
                             )
                         else:
-                            confirmation_content = (
-                                f"Auto Administrator Timeout reached after {int(elapsed)} seconds while all online participants were in msg_wait. "
-                                f"Current admin: {current_admin_emoji} {current_admin_label}. "
-                                f"Candidate admin: {candidate_emoji} {candidate_label}. "
-                                "Human confirmation is required before changing administrator."
+                            risk_content = (
+                                "Thread coordination warning: the current administrator is not online/waiting. "
+                                "Agents in this thread may all be offline. Please check agent working status."
                             )
+                            risk_meta = {
+                                "ui_type": "agent_offline_risk_notice",
+                                "visibility": "human_only",
+                                "thread_id": thread_id,
+                                "reason": "no_actionable_admin",
+                                "current_admin_id": current_admin_id,
+                                "current_admin_name": current_admin_label,
+                                "timeout_seconds": int(elapsed),
+                                "online_agents_count": participant_count,
+                                "triggered_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                            await asyncio.wait_for(
+                                crud._msg_create_system(
+                                    db,
+                                    thread_id=thread_id,
+                                    content=risk_content,
+                                    metadata=risk_meta,
+                                    clear_auto_admin=False,
+                                ),
+                                timeout=DB_TIMEOUT,
+                            )
+                    elif needs_switch_confirmation:
+                        confirmation_content = (
+                            f"Auto Administrator Timeout reached after {int(elapsed)} seconds while all online participants were in msg_wait. "
+                            f"Current admin: {current_admin_emoji} {current_admin_label}. "
+                            f"Candidate admin: {candidate_emoji} {candidate_label}. "
+                            "Human confirmation is required before changing administrator."
+                        )
 
                         confirmation_meta = {
                             "ui_type": "admin_switch_confirmation_required",
                             "visibility": "human_only",
                             "thread_id": thread_id,
                             "reason": "all_agents_waiting",
-                            "mode": "single_agent" if participant_count == 1 else "multi_agent",
+                            "mode": "single_agent_fallback",
                             "current_admin_id": current_admin_id,
                             "current_admin_name": current_admin_label,
                             "current_admin_emoji": current_admin_emoji,
@@ -376,43 +502,6 @@ async def _admin_coordinator_loop() -> None:
                             ),
                             timeout=DB_TIMEOUT,
                         )
-
-                    human_notice = (
-                        f"Auto Administrator Timeout triggered after {int(elapsed)} seconds. "
-                        "All online participants are currently waiting in msg_wait. "
-                        + (
-                            "Administrator switch now requires human confirmation."
-                            if needs_switch_confirmation
-                            else "Current administrator remains unchanged."
-                        )
-                    )
-                    human_meta = {
-                        "ui_type": "admin_coordination_timeout_notice",
-                        "visibility": "human_only",
-                        "thread_id": thread_id,
-                        "reason": "all_agents_waiting",
-                        "mode": "single_agent" if participant_count == 1 else "multi_agent",
-                        "current_admin_id": current_admin_id,
-                        "current_admin_name": current_admin_label,
-                        "current_admin_emoji": current_admin_emoji,
-                        "candidate_admin_id": candidate_agent.id,
-                        "candidate_admin_name": candidate_label,
-                        "candidate_admin_emoji": candidate_emoji,
-                        "timeout_seconds": int(elapsed),
-                        "online_agents_count": participant_count,
-                        "switch_confirmation_required": needs_switch_confirmation,
-                        "triggered_at": datetime.now(timezone.utc).isoformat(),
-                    }
-                    await asyncio.wait_for(
-                        crud._msg_create_system(
-                            db,
-                            thread_id=thread_id,
-                            content=human_notice,
-                            metadata=human_meta,
-                            clear_auto_admin=False,
-                        ),
-                        timeout=DB_TIMEOUT,
-                    )
 
                     await asyncio.wait_for(
                         crud.thread_wait_clear_thread(db, thread_id),
@@ -1726,7 +1815,7 @@ class ThreadSettingsUpdate(BaseModel):
 
 
 class AdminDecisionRequest(BaseModel):
-    action: Literal["switch", "keep"]
+    action: Literal["switch", "keep", "takeover", "cancel"]
     candidate_admin_id: str | None = None
     source_message_id: str | None = None
 
@@ -1876,8 +1965,23 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
                 raise HTTPException(status_code=400, detail="source_message_id does not belong to this thread")
 
             source_meta = _parse_metadata_dict(source_msg.metadata)
-            if source_meta.get("ui_type") != "admin_switch_confirmation_required":
+            source_ui_type = str(source_meta.get("ui_type") or "").strip()
+            if source_ui_type not in {
+                "admin_switch_confirmation_required",
+                "admin_takeover_confirmation_required",
+            }:
                 raise HTTPException(status_code=400, detail="source_message_id is not an admin confirmation prompt")
+
+            allowed_actions = {
+                "admin_switch_confirmation_required": {"switch", "keep"},
+                "admin_takeover_confirmation_required": {"takeover", "cancel"},
+            }.get(source_ui_type, set())
+            if body.action not in allowed_actions:
+                allowed_text = ", ".join(sorted(allowed_actions))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid action '{body.action}' for source_message_id ui_type={source_ui_type}. Allowed: {allowed_text}",
+                )
 
             if source_meta.get("decision_status") == "resolved":
                 existing_action = str(source_meta.get("decision_action") or body.action)
@@ -1962,26 +2066,141 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
                 "already_decided": False,
             }
 
-        kept_badge = f"{_agent_emoji(current_admin_id)} {current_admin_name or current_admin_id or 'Unknown'}"
-        confirmation = f"Administrator kept by human decision: {kept_badge}."
-        metadata = {
-            "ui_type": "admin_switch_decision_result",
-            "decision": "keep",
+        if body.action == "keep":
+            kept_badge = f"{_agent_emoji(current_admin_id)} {current_admin_name or current_admin_id or 'Unknown'}"
+            confirmation = f"Administrator kept by human decision: {kept_badge}."
+            metadata = {
+                "ui_type": "admin_switch_decision_result",
+                "decision": "keep",
+                "thread_id": thread_id,
+                "source_message_id": body.source_message_id,
+                "kept_admin_id": current_admin_id,
+                "kept_admin_name": current_admin_name,
+                "kept_admin_emoji": _agent_emoji(current_admin_id),
+                "decided_at": decided_at,
+            }
+
+            try:
+                await asyncio.wait_for(
+                    crud._msg_create_system(
+                        db,
+                        thread_id=thread_id,
+                        content=confirmation,
+                        metadata=metadata,
+                        clear_auto_admin=False,
+                    ),
+                    timeout=DB_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=503, detail="Database operation timeout")
+
+            if source_msg is not None:
+                source_meta["decision_status"] = "resolved"
+                source_meta["decision_action"] = "keep"
+                source_meta["decision_at"] = decided_at
+                await db.execute(
+                    "UPDATE messages SET metadata = ? WHERE id = ?",
+                    (json.dumps(source_meta), source_msg.id),
+                )
+                await db.commit()
+
+            return {
+                "ok": True,
+                "action": "keep",
+                "thread_id": thread_id,
+                "kept_admin_id": current_admin_id,
+                "kept_admin_name": current_admin_name,
+                "already_decided": False,
+            }
+
+        if body.action == "takeover":
+            target_admin_id = (
+                source_meta.get("current_admin_id")
+                or current_admin_id
+                or body.candidate_admin_id
+            )
+            if not target_admin_id:
+                raise HTTPException(status_code=400, detail="No actionable administrator found for takeover")
+
+            try:
+                target_admin = await asyncio.wait_for(crud.agent_get(db, target_admin_id), timeout=DB_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=503, detail="Database operation timeout")
+            if target_admin is None:
+                raise HTTPException(status_code=404, detail="Takeover administrator agent not found")
+
+            target_name = target_admin.display_name or target_admin.name or target_admin.id
+            target_emoji = _agent_emoji(target_admin.id)
+            instruction = (
+                f"Coordinator decision: {target_emoji} {target_name}, all other agents appear offline/unavailable. "
+                "Please take over now, continue work directly, and do not keep waiting in msg_wait."
+            )
+            metadata = {
+                "ui_type": "admin_coordination_takeover_instruction",
+                "decision": "takeover",
+                "thread_id": thread_id,
+                "source_message_id": body.source_message_id,
+                "handoff_target": target_admin.id,
+                "target_admin_id": target_admin.id,
+                "target_admin_name": target_name,
+                "target_admin_emoji": target_emoji,
+                "decided_at": decided_at,
+            }
+
+            try:
+                await asyncio.wait_for(
+                    crud._msg_create_system(
+                        db,
+                        thread_id=thread_id,
+                        content=instruction,
+                        metadata=metadata,
+                        clear_auto_admin=False,
+                    ),
+                    timeout=DB_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=503, detail="Database operation timeout")
+
+            if source_msg is not None:
+                source_meta["decision_status"] = "resolved"
+                source_meta["decision_action"] = "takeover"
+                source_meta["decision_at"] = decided_at
+                await db.execute(
+                    "UPDATE messages SET metadata = ? WHERE id = ?",
+                    (json.dumps(source_meta), source_msg.id),
+                )
+                await db.commit()
+
+            return {
+                "ok": True,
+                "action": "takeover",
+                "thread_id": thread_id,
+                "notified_admin_id": target_admin.id,
+                "notified_admin_name": target_name,
+                "already_decided": False,
+            }
+
+        # cancel
+        cancel_meta = {
+            "ui_type": "admin_takeover_decision_result",
+            "decision": "cancel",
+            "visibility": "human_only",
             "thread_id": thread_id,
             "source_message_id": body.source_message_id,
-            "kept_admin_id": current_admin_id,
-            "kept_admin_name": current_admin_name,
-            "kept_admin_emoji": _agent_emoji(current_admin_id),
             "decided_at": decided_at,
         }
+        cancel_content = (
+            "Administrator takeover request canceled by human decision. "
+            "System will continue waiting for other agents to come online."
+        )
 
         try:
             await asyncio.wait_for(
                 crud._msg_create_system(
                     db,
                     thread_id=thread_id,
-                    content=confirmation,
-                    metadata=metadata,
+                    content=cancel_content,
+                    metadata=cancel_meta,
                     clear_auto_admin=False,
                 ),
                 timeout=DB_TIMEOUT,
@@ -1991,7 +2210,7 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
 
         if source_msg is not None:
             source_meta["decision_status"] = "resolved"
-            source_meta["decision_action"] = "keep"
+            source_meta["decision_action"] = "cancel"
             source_meta["decision_at"] = decided_at
             await db.execute(
                 "UPDATE messages SET metadata = ? WHERE id = ?",
@@ -2001,10 +2220,8 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
 
         return {
             "ok": True,
-            "action": "keep",
+            "action": "cancel",
             "thread_id": thread_id,
-            "kept_admin_id": current_admin_id,
-            "kept_admin_name": current_admin_name,
             "already_decided": False,
         }
     finally:

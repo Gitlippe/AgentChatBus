@@ -310,3 +310,80 @@ def test_admin_decision_concurrent_submit_emits_single_switch_event():
             if "Administrator switched by human decision" in (m.get("content") or "")
         ]
         assert len(switched_msgs) == 1
+
+
+def test_admin_takeover_decision_emits_targeted_instruction_and_cancel_is_recorded():
+    with _build_client() as client:
+        _require_server_or_skip(client)
+        creator_id, creator_token = _register_agent(client)
+        thread_id = _create_thread(client, creator_id, creator_token)
+
+        prompt_resp = client.post(
+            f"/api/threads/{thread_id}/messages",
+            json={
+                "author": creator_id,
+                "role": "assistant",
+                "content": "Only current admin is online and waiting.",
+                "metadata": {
+                    "ui_type": "admin_takeover_confirmation_required",
+                    "thread_id": thread_id,
+                    "current_admin_id": creator_id,
+                },
+            },
+            headers={"X-Agent-Token": creator_token},
+        )
+        assert prompt_resp.status_code == 201, prompt_resp.text
+        source_message_id = prompt_resp.json()["id"]
+
+        takeover_resp = client.post(
+            f"/api/threads/{thread_id}/admin/decision",
+            json={
+                "action": "takeover",
+                "source_message_id": source_message_id,
+            },
+        )
+        assert takeover_resp.status_code == 200, takeover_resp.text
+        takeover_payload = takeover_resp.json()
+        assert takeover_payload["action"] == "takeover"
+        assert takeover_payload["notified_admin_id"] == creator_id
+
+        msgs_resp = client.get(
+            f"/api/threads/{thread_id}/messages",
+            params={"after_seq": 0, "limit": 200, "include_system_prompt": 0},
+        )
+        assert msgs_resp.status_code == 200, msgs_resp.text
+        msgs = msgs_resp.json()
+        takeover_msgs = [
+            m for m in msgs
+            if "ui_type\": \"admin_coordination_takeover_instruction\"" in (m.get("metadata") or "")
+        ]
+        assert len(takeover_msgs) == 1
+        assert f'"handoff_target": "{creator_id}"' in (takeover_msgs[0].get("metadata") or "")
+
+        prompt_resp_cancel = client.post(
+            f"/api/threads/{thread_id}/messages",
+            json={
+                "author": creator_id,
+                "role": "assistant",
+                "content": "Takeover prompt for cancel path.",
+                "metadata": {
+                    "ui_type": "admin_takeover_confirmation_required",
+                    "thread_id": thread_id,
+                    "current_admin_id": creator_id,
+                },
+            },
+            headers={"X-Agent-Token": creator_token},
+        )
+        assert prompt_resp_cancel.status_code == 201, prompt_resp_cancel.text
+        source_message_id_cancel = prompt_resp_cancel.json()["id"]
+
+        cancel_resp = client.post(
+            f"/api/threads/{thread_id}/admin/decision",
+            json={
+                "action": "cancel",
+                "source_message_id": source_message_id_cancel,
+            },
+        )
+        assert cancel_resp.status_code == 200, cancel_resp.text
+        cancel_payload = cancel_resp.json()
+        assert cancel_payload["action"] == "cancel"

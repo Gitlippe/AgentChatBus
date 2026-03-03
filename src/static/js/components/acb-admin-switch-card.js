@@ -22,7 +22,9 @@
       return String(v ?? "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
     _resolveApi() {
@@ -30,6 +32,15 @@
       if (typeof apiFn === "function") return apiFn;
       if (typeof window.AcbApi?.api === "function") return window.AcbApi.api;
       return null;
+    }
+
+    _statusText(action, alreadyDecided) {
+      const past = alreadyDecided ? "already " : "";
+      if (action === "switch") return `Administrator switch ${past}confirmed.`;
+      if (action === "keep") return `Administrator keep decision ${past}recorded.`;
+      if (action === "takeover") return `Administrator takeover instruction ${past}sent.`;
+      if (action === "cancel") return `Takeover request ${past}canceled.`;
+      return alreadyDecided ? "Decision already recorded." : "Decision submitted.";
     }
 
     async _submitDecision(action) {
@@ -45,17 +56,17 @@
       this._isSubmitting = true;
       this.classList.remove("resolved");
 
-      const switchBtn = this.querySelector('[data-action="switch"]');
-      const keepBtn = this.querySelector('[data-action="keep"]');
+      const actionButtons = this.querySelectorAll('[data-action]');
       const status = this.querySelector('.msg-sys-admin-status');
 
-      if (switchBtn) switchBtn.disabled = true;
-      if (keepBtn) keepBtn.disabled = true;
+      actionButtons.forEach((btn) => {
+        btn.disabled = true;
+      });
       if (status) status.textContent = "Submitting decision...";
 
       const payload = {
         action,
-        candidate_admin_id: meta.candidate_admin_id || null,
+        candidate_admin_id: action === "switch" ? (meta.candidate_admin_id || null) : null,
         source_message_id: message.id || null,
       };
 
@@ -68,15 +79,7 @@
         if (status) {
           const finalAction = result.action || action;
           const isAlreadyDecided = Boolean(result.already_decided);
-          if (isAlreadyDecided) {
-            status.textContent = finalAction === "switch"
-              ? "Administrator switch already confirmed."
-              : "Administrator keep decision already recorded.";
-          } else {
-            status.textContent = finalAction === "switch"
-              ? "Administrator switch confirmed by human."
-              : "Administrator kept by human decision.";
-          }
+          status.textContent = this._statusText(finalAction, isAlreadyDecided);
         }
         this.classList.add("resolved");
         this._isSubmitting = false;
@@ -84,8 +87,9 @@
       }
 
       if (status) status.textContent = "Failed to submit decision. Please retry.";
-      if (switchBtn) switchBtn.disabled = false;
-      if (keepBtn) keepBtn.disabled = false;
+      actionButtons.forEach((btn) => {
+        btn.disabled = false;
+      });
       this._isSubmitting = false;
     }
 
@@ -97,6 +101,8 @@
 
       const meta = this._data.metadata || {};
       const message = this._data.message || {};
+      const uiType = String(meta.ui_type || "").trim();
+      const isTakeoverCard = uiType === "admin_takeover_confirmation_required";
 
       this.className = "msg-sys-admin-card";
       this.setAttribute("data-seq", String(message.seq ?? ""));
@@ -104,12 +110,26 @@
       const currentBadge = `${meta.current_admin_emoji || "👑"} ${meta.current_admin_name || meta.current_admin_id || "Unknown"}`;
       const candidateBadge = `${meta.candidate_admin_emoji || "🤖"} ${meta.candidate_admin_name || meta.candidate_admin_id || "Unknown"}`;
 
-      const switchLabel = (meta.ui_buttons && meta.ui_buttons[0] && meta.ui_buttons[0].label)
-        ? String(meta.ui_buttons[0].label)
-        : `Switch admin to ${candidateBadge}`;
-      const keepLabel = (meta.ui_buttons && meta.ui_buttons[1] && meta.ui_buttons[1].label)
-        ? String(meta.ui_buttons[1].label)
-        : `Keep ${currentBadge} as admin`;
+      const defaultButtons = isTakeoverCard
+        ? [
+            { action: "takeover", label: "Require administrator to take over now" },
+            { action: "cancel", label: "Cancel" },
+          ]
+        : [
+            { action: "switch", label: `Switch admin to ${candidateBadge}` },
+            { action: "keep", label: `Keep ${currentBadge} as admin` },
+          ];
+      const uiButtons = Array.isArray(meta.ui_buttons) && meta.ui_buttons.length >= 2
+        ? meta.ui_buttons
+        : defaultButtons;
+      const primaryBtn = uiButtons[0] || defaultButtons[0];
+      const secondaryBtn = uiButtons[1] || defaultButtons[1];
+      const primaryAction = String(primaryBtn.action || defaultButtons[0].action);
+      const secondaryAction = String(secondaryBtn.action || defaultButtons[1].action);
+      const primaryLabel = String(primaryBtn.label || defaultButtons[0].label);
+      const secondaryLabel = String(secondaryBtn.label || defaultButtons[1].label);
+      const primaryTooltip = String(primaryBtn.tooltip || "").trim();
+      const secondaryTooltip = String(secondaryBtn.tooltip || "").trim();
       const resolvedAction = String(meta.decision_action || "").trim();
       const isResolved = meta.decision_status === "resolved" || resolvedAction.length > 0;
       const timeoutSeconds = Number.isFinite(Number(meta.timeout_seconds)) ? Number(meta.timeout_seconds) : null;
@@ -134,42 +154,47 @@
         `
         : "";
 
+      const cardTitle = isTakeoverCard
+        ? "Administrator takeover confirmation required"
+        : "Administrator switch confirmation required";
+      const subjectLine = isTakeoverCard
+        ? `Administrator: ${this._esc(currentBadge)}`
+        : `Current admin: ${this._esc(currentBadge)} | Candidate: ${this._esc(candidateBadge)}`;
+
       this.innerHTML = `
-        <div class="msg-sys-admin-title">Administrator switch confirmation required</div>
+        <div class="msg-sys-admin-title">${this._esc(cardTitle)}</div>
         <div class="msg-sys-admin-body">${this._esc(reasonText)} ${this._esc(onlineText)}</div>
+        <div class="msg-sys-admin-body">${this._esc(message.content || "")}</div>
         <div class="msg-sys-admin-body">${this._esc(visibilityText)}</div>
         ${humanOnlyHint}
-        <div class="msg-sys-admin-body">Current admin: ${this._esc(currentBadge)} | Candidate: ${this._esc(candidateBadge)}</div>
+        <div class="msg-sys-admin-body">${subjectLine}</div>
         <div class="msg-sys-admin-actions">
-          <button type="button" class="msg-sys-admin-btn msg-sys-admin-btn-switch" data-action="switch">${this._esc(switchLabel)}</button>
-          <button type="button" class="msg-sys-admin-btn" data-action="keep">${this._esc(keepLabel)}</button>
+          <button type="button" class="msg-sys-admin-btn msg-sys-admin-btn-switch" data-action="${this._esc(primaryAction)}" ${primaryTooltip ? `title="${this._esc(primaryTooltip)}"` : ""}>${this._esc(primaryLabel)}</button>
+          <button type="button" class="msg-sys-admin-btn" data-action="${this._esc(secondaryAction)}" ${secondaryTooltip ? `title="${this._esc(secondaryTooltip)}"` : ""}>${this._esc(secondaryLabel)}</button>
         </div>
         <div class="msg-sys-admin-status"></div>
       `;
 
-      const switchBtn = this.querySelector('[data-action="switch"]');
-      const keepBtn = this.querySelector('[data-action="keep"]');
+      const actionButtons = this.querySelectorAll('[data-action]');
       const status = this.querySelector('.msg-sys-admin-status');
 
       if (isResolved) {
         this.classList.add("resolved");
-        if (switchBtn) switchBtn.disabled = true;
-        if (keepBtn) keepBtn.disabled = true;
+        actionButtons.forEach((btn) => {
+          btn.disabled = true;
+        });
         if (status) {
-          status.textContent = resolvedAction === "switch"
-            ? "Administrator switch already confirmed."
-            : "Administrator keep decision already recorded.";
+          status.textContent = this._statusText(resolvedAction, true);
         }
       } else {
         this.classList.remove("resolved");
       }
 
-      if (switchBtn) {
-        switchBtn.addEventListener("click", () => this._submitDecision("switch"));
-      }
-      if (keepBtn) {
-        keepBtn.addEventListener("click", () => this._submitDecision("keep"));
-      }
+      actionButtons.forEach((btn) => {
+        const action = String(btn.getAttribute("data-action") || "").trim();
+        if (!action) return;
+        btn.addEventListener("click", () => this._submitDecision(action));
+      });
     }
   }
 

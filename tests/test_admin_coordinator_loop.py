@@ -28,7 +28,7 @@ class _SleepBreaker:
 
 
 @pytest.mark.asyncio
-async def test_admin_coordinator_single_agent_emits_human_notice_without_confirmation(monkeypatch):
+async def test_admin_coordinator_single_agent_emits_no_system_message_without_confirmation(monkeypatch):
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "single-agent-intervention")
@@ -67,19 +67,13 @@ async def test_admin_coordinator_single_agent_emits_human_notice_without_confirm
         ]
         assert len(confirmation_msgs) == 0
 
-        human_msgs = [
-            m
-            for m in msgs
-            if m.metadata and '"ui_type": "admin_coordination_timeout_notice"' in m.metadata
-        ]
-        assert len(human_msgs) == 1
-        assert '"switch_confirmation_required": false' in (human_msgs[0].metadata or "")
+        assert len(msgs) == 0
     finally:
         await db.close()
 
 
 @pytest.mark.asyncio
-async def test_admin_coordinator_multi_agent_emits_confirmation_without_switch(monkeypatch):
+async def test_admin_coordinator_multi_agent_emits_notice_and_admin_instruction(monkeypatch):
     db = await _setup_db()
     try:
         thread = await crud.thread_create(db, "multi-agent-intervention")
@@ -152,10 +146,25 @@ async def test_admin_coordinator_multi_agent_emits_confirmation_without_switch(m
             for m in msgs
             if m.metadata and '"ui_type": "admin_switch_confirmation_required"' in m.metadata
         ]
-        assert len(confirmation_msgs) == 1
-        confirmation_meta = confirmation_msgs[0].metadata or ""
-        assert '"current_admin_id": "' + admin.id + '"' in confirmation_meta
-        assert '"candidate_admin_id": "' + peer.id + '"' in confirmation_meta
+        assert len(confirmation_msgs) == 0
+
+        notice_msgs = [
+            m
+            for m in msgs
+            if m.metadata and '"ui_type": "admin_coordination_timeout_notice"' in m.metadata
+        ]
+        assert len(notice_msgs) == 1
+        notice_meta = notice_msgs[0].metadata or ""
+        assert '"visibility": "human_only"' in notice_meta
+
+        instruction_msgs = [
+            m
+            for m in msgs
+            if m.metadata and '"ui_type": "admin_coordination_takeover_instruction"' in m.metadata
+        ]
+        assert len(instruction_msgs) == 1
+        instruction_meta = instruction_msgs[0].metadata or ""
+        assert '"handoff_target": "' + admin.id + '"' in instruction_meta
 
         assert any(
             (m.metadata and "\"visibility\": \"human_only\"" in m.metadata)
@@ -208,12 +217,14 @@ async def test_admin_coordinator_single_online_current_admin_skips_confirmation(
         ]
         assert len(confirmation_msgs) == 0
 
-        human_msgs = [
+        takeover_msgs = [
             m
             for m in msgs
-            if m.metadata and '"ui_type": "admin_coordination_timeout_notice"' in m.metadata
+            if m.metadata and '"ui_type": "admin_takeover_confirmation_required"' in m.metadata
         ]
-        assert len(human_msgs) == 1
-        assert '"switch_confirmation_required": false' in (human_msgs[0].metadata or "")
+        assert len(takeover_msgs) == 1
+        takeover_meta = takeover_msgs[0].metadata or ""
+        assert '"visibility": "human_only"' in takeover_meta
+        assert '"current_admin_id": "' + admin.id + '"' in takeover_meta
     finally:
         await db.close()

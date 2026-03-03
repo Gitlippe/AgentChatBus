@@ -80,7 +80,7 @@ async def test_msg_wait_and_msg_list_filter_human_only_system_messages():
             thread.id,
             "Auto Administrator Timeout triggered after 100 seconds.",
             metadata={
-                "ui_type": "admin_coordination_timeout_notice",
+                "ui_type": "admin_switch_confirmation_required",
                 "visibility": "human_only",
             },
             clear_auto_admin=False,
