@@ -108,17 +108,32 @@
         <div id="search-all-results" class="search-all-results" aria-live="polite"></div>
       </div>
 
-      <div id="messages-wrap" style="position:relative;flex:1;overflow:hidden;display:flex;flex-direction:column;">
-        <div id="messages">
-          <acb-empty-state></acb-empty-state>
+
+      <!-- UI-07: messages-wrap: system prompt full-width, then chat-body flex-row -->
+      <div id="messages-wrap">
+
+        <!-- System prompt occupies full width -->
+        <div id="sys-prompt-area"></div>
+
+        <!-- chat-body: messages + minimap side by side -->
+        <div id="chat-body">
+          <div id="messages-scroll">
+            <div id="messages">
+              <acb-empty-state></acb-empty-state>
+            </div>
+          </div>
+
+          <!-- UI-07: emoji minimap column -->
+          <nav id="nav-sidebar" aria-label="Message navigation"></nav>
+
+          <!-- UI-08: Scroll-to-top floating button -->
+          <button id="btn-scroll-top" class="scroll-top-btn" aria-label="Scroll to top" title="Scroll to top">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="18 15 12 9 6 15"/>
+            </svg>
+          </button>
         </div>
 
-        <!-- UI-08: Scroll-to-top floating button -->
-        <button id="btn-scroll-top" class="scroll-top-btn" aria-label="Scroll to top" title="Scroll to top">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="18 15 12 9 6 15"/>
-          </svg>
-        </button>
       </div>
 
       <acb-compose-shell></acb-compose-shell>
@@ -143,8 +158,8 @@
   <script src="/static/js/shared-utils.js?v=3"></script>
   <script src="/static/js/shared-message-renderer.js?v=2"></script>
   <script src="/static/js/shared-sse.js?v=2"></script>
-  <script src="/static/js/shared-modals.js?v=4"></script>
-  <script src="/static/js/components/acb-modal-shell.js?v=3"></script>
+  <script src="/static/js/shared-modals.js?v=5"></script>
+  <script src="/static/js/components/acb-modal-shell.js?v=4"></script>
   <script src="/static/js/components/acb-empty-state.js?v=2"></script>
   <script src="/static/js/components/acb-icon-button.js?v=2"></script>
   <script src="/static/js/components/acb-filter-actions.js?v=2"></script>
@@ -162,6 +177,7 @@
   <script src="/static/js/components/acb-agent-status-item.js?v=2"></script>
   <script src="/static/js/shared-agents.js?v=3"></script>
   <script src="/static/js/shared-chat.js?v=2"></script>
+  <script src="/static/js/shared-nav-sidebar.js?v=1"></script>
   <script src="/static/js/shared-tooltip.js?v=2"></script>
   <script src="/static/js/components/acb-confirm-dialog.js?v=2"></script>
   <!-- UI-02: Fuse.js (vendored) + search module -->
@@ -231,15 +247,15 @@
       window.AcbTooltip.init();
       applySavedTheme();
 
-      // UI-08: Scroll-to-top button
+      // UI-08: Scroll-to-top button (scrolls #messages-scroll, not #messages)
       const scrollTopBtn = document.getElementById('btn-scroll-top');
-      const messagesBox = document.getElementById('messages');
-      if (scrollTopBtn && messagesBox) {
-        messagesBox.addEventListener('scroll', () => {
-          scrollTopBtn.classList.toggle('visible', messagesBox.scrollTop > 300);
+      const messagesScrollBox = document.getElementById('messages-scroll');
+      if (scrollTopBtn && messagesScrollBox) {
+        messagesScrollBox.addEventListener('scroll', () => {
+          scrollTopBtn.classList.toggle('visible', messagesScrollBox.scrollTop > 300);
         });
         scrollTopBtn.addEventListener('click', () => {
-          messagesBox.scrollTo({ top: 0, behavior: 'smooth' });
+          messagesScrollBox.scrollTo({ top: 0, behavior: 'smooth' });
         });
       }
 
@@ -268,36 +284,6 @@
       await refreshAgents();
       updateOnlinePresence();
       startSSE();
-
-      // UI-11: restore thread from URL hash on page load
-      await (async function restoreThreadFromHash() {
-        const m = location.hash.match(/^#thread=(.+)$/);
-        if (!m) return;
-        const id = decodeURIComponent(m[1]);
-        try {
-          const response = await api(`/api/threads?include_archived=1&limit=500`);
-          const t = (response.threads || []).find((th) => th.id === id);
-          if (t) selectThread(t.id, t.topic, t.status);
-          else history.replaceState(null, '', location.pathname);
-        } catch (_) {
-          history.replaceState(null, '', location.pathname);
-        }
-      })();
-
-      // UI-11: handle browser back/forward for thread deeplinks
-      window.addEventListener('hashchange', async () => {
-        const m = location.hash.match(/^#thread=(.+)$/);
-        if (!m) return;
-        const id = decodeURIComponent(m[1]);
-        try {
-          const response = await api(`/api/threads?include_archived=1&limit=500`);
-          const t = (response.threads || []).find((th) => th.id === id);
-          if (t) selectThread(t.id, t.topic, t.status);
-          else history.replaceState(null, '', location.pathname);
-        } catch (_) {
-          history.replaceState(null, '', location.pathname);
-        }
-      });
       // Temporarily disable periodic agent polling to avoid showing many offline agents
       // setInterval(refreshAgents, 12000);
       setInterval(refreshAgents, 5000);  // Update status bar every 5 seconds
@@ -750,8 +736,6 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
     async function selectThread(id, topic, status, initialSyncContext = null) {
       // Close mobile sidebar when selecting thread
       closeMobileSidebar();
-      // UI-11: persist selected thread in URL hash (no page reload)
-      history.replaceState(null, '', '#thread=' + encodeURIComponent(id));
       
       return window.AcbChat.selectThread({
         id, topic, status,
@@ -776,6 +760,8 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
       }).then(() => {
         // UI-02: rebuild Fuse.js index after thread messages loaded
         if (window.AcbSearch) window.AcbSearch.rebuild();
+        // UI-07: rebuild nav sidebar after thread messages loaded
+        if (window.AcbNavSidebar) window.AcbNavSidebar.rebuild();
       });
     }
     // Expose globally for AcbSearch navigation
@@ -920,6 +906,8 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
       document.getElementById('thread-header').style.display = 'none';
       document.getElementById('compose').classList.remove('visible');
       document.getElementById('messages').innerHTML = EMPTY_STATE_TEMPLATE;
+      const sysArea = document.getElementById('sys-prompt-area');
+      if (sysArea) sysArea.innerHTML = '';
       updateOnlinePresence();
     }
 
@@ -977,9 +965,11 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
     function appendBubble(m) {
       const box = document.getElementById('messages');
 
-      // ---- Deduplication check: prevent duplicate messages from appearing ---
+      // ---- Deduplication check (also check sys-prompt-area for seq=0) --------
       const seq = String(m.seq);
-      const existingMsg = box.querySelector(`[data-seq="${seq}"]`);
+      const sysPromptArea = document.getElementById('sys-prompt-area');
+      const existingMsg = box.querySelector(`[data-seq="${seq}"]`) ||
+        (sysPromptArea && sysPromptArea.querySelector(`[data-seq="${seq}"]`));
       if (existingMsg) {
         console.warn(`[Deduplicate] Message seq ${seq} already exists in DOM, skipping.`);
         return;
@@ -1071,10 +1061,10 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
             promptHeader.setAttribute('aria-expanded', String(!expanded));
             promptHeader.classList.toggle('is-expanded', !expanded);
             promptBody.classList.toggle('collapsed', expanded);
-            promptHeader.querySelector('.msg-sys-prompt-chevron').innerHTML = expanded ? '&#9660;' : '&#9650;';
-            promptHeader.querySelector('.msg-sys-prompt-label').textContent = expanded
-              ? 'Thread Instructions (system) — click to expand'
-              : 'Thread Instructions (system)';
+            promptHeader.querySelector('.msg-sys-prompt-chevron').innerHTML = !expanded ? '&#9650;' : '&#9660;';
+            promptHeader.querySelector('.msg-sys-prompt-label').textContent = !expanded
+              ? 'Thread Instructions (system)'
+              : 'Thread Instructions (system) — click to expand';
           });
 
           wrapper.appendChild(promptHeader);
@@ -1104,7 +1094,10 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
           });
           promptBody.appendChild(promptCopyBtn);
 
-          box.appendChild(wrapper);
+          // UI-07: system prompt goes into its own full-width area (above chat-body)
+          const sysArea = document.getElementById('sys-prompt-area') || box;
+          sysArea.innerHTML = '';
+          sysArea.appendChild(wrapper);
           return;
         }
 
@@ -1281,8 +1274,24 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
       }
 
       box.appendChild(row);
-    }
+      if (window.AcbNavSidebar) window.AcbNavSidebar.onNewMessage();
 
+      // UI-07: collapse system prompt on first real message
+      const sysArea = document.getElementById('sys-prompt-area');
+      if (sysArea) {
+        const header = sysArea.querySelector('.msg-sys-prompt-header');
+        const body = sysArea.querySelector('.msg-sys-prompt-body');
+        if (header && body && header.getAttribute('aria-expanded') === 'true') {
+          header.setAttribute('aria-expanded', 'false');
+          header.classList.remove('is-expanded');
+          body.classList.add('collapsed');
+          const chevron = header.querySelector('.msg-sys-prompt-chevron');
+          const label = header.querySelector('.msg-sys-prompt-label');
+          if (chevron) chevron.innerHTML = '&#9660;';
+          if (label) label.textContent = 'Thread Instructions (system) — click to expand';
+        }
+      }
+    }
     // ---- Typing indicator ----------------------------------------------------------------------------------------------------------
     function showTyping(agentId) {
       const box = document.getElementById('messages');
@@ -1439,7 +1448,7 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
     // Access them via window.AcbMessageRenderer.renderMarkdown() and window.AcbMessageRenderer.inlineMd()
 
     function scrollBottom(smooth = false) {
-      const box = document.getElementById('messages');
+      const box = document.getElementById('messages-scroll');
       if (!box) return;
 
       // Use setTimeout to ensure DOM updates and layout are fully applied
