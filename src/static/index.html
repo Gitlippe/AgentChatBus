@@ -54,9 +54,44 @@
     <div id="main">
       <acb-thread-header></acb-thread-header>
 
+      <!-- UI-02: Search bar -->
+      <div id="search-bar" role="search" aria-label="Search messages">
+        <div class="search-bar-row">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input id="search-input" type="text" placeholder="Search messages…" autocomplete="off" spellcheck="false" aria-label="Search query"/>
+          <span id="search-counter" class="search-counter" aria-live="polite"></span>
+          <button id="search-prev" class="search-nav-btn" title="Previous match" aria-label="Previous match">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button id="search-next" class="search-nav-btn" title="Next match" aria-label="Next match">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+          <button id="search-close" class="search-close-btn" title="Close search (Esc)" aria-label="Close search">×</button>
+        </div>
+        <div class="search-pills-row">
+          <span class="search-pills-label">Search in:</span>
+          <button id="pill-content" class="search-pill active" data-field="content">Content</button>
+          <button id="pill-author" class="search-pill" data-field="author">Author</button>
+          <button id="pill-meta" class="search-pill" data-field="metadata">Metadata</button>
+          <span class="search-pills-sep"></span>
+          <button id="scope-current" class="search-pill active" data-scope="current">Current thread</button>
+          <button id="scope-all" class="search-pill" data-scope="all">All threads</button>
+        </div>
+        <div id="search-all-results" class="search-all-results" aria-live="polite"></div>
+      </div>
+
       <div id="messages">
         <acb-empty-state></acb-empty-state>
       </div>
+
+      <!-- UI-08: Scroll-to-top floating button -->
+      <button id="btn-scroll-top" class="scroll-top-btn" aria-label="Scroll to top" title="Scroll to top">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"/>
+        </svg>
+      </button>
 
       <acb-compose-shell></acb-compose-shell>
 
@@ -101,6 +136,9 @@
   <script src="/static/js/shared-chat.js?v=2"></script>
   <script src="/static/js/shared-tooltip.js?v=2"></script>
   <script src="/static/js/components/acb-confirm-dialog.js?v=2"></script>
+  <!-- UI-02: Fuse.js (vendored) + search module -->
+  <script src="/static/js/vendor/fuse.min.js"></script>
+  <script src="/static/js/shared-search.js?v=1"></script>
   <script>
     // ==============================================================================================
     // State
@@ -164,6 +202,21 @@
     (async function init() {
       window.AcbTooltip.init();
       applySavedTheme();
+
+      // UI-08: Scroll-to-top button
+      const scrollTopBtn = document.getElementById('btn-scroll-top');
+      const messagesBox = document.getElementById('messages');
+      if (scrollTopBtn && messagesBox) {
+        messagesBox.addEventListener('scroll', () => {
+          scrollTopBtn.classList.toggle('visible', messagesBox.scrollTop > 300);
+        });
+        scrollTopBtn.addEventListener('click', () => {
+          messagesBox.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      // UI-02: Initialize search
+      if (window.AcbSearch) window.AcbSearch.init();
       await refreshThreads();
       await refreshAgents();
       updateOnlinePresence();
@@ -530,6 +583,9 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
         setLastSeq: (s) => { lastSeq = s; },
         clearThreadParticipants: () => activeThreadLastSeenMs.clear(),
         scrollBottom,
+      }).then(() => {
+        // UI-02: rebuild Fuse.js index after thread messages loaded
+        if (window.AcbSearch) window.AcbSearch.rebuild();
       });
     }
 

@@ -636,17 +636,28 @@ body[data-theme="light"] #export-thread-btn:hover {
   animation: none !important;
 }
 
+#messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-dim) var(--bg-panel);
+}
+
 #messages::-webkit-scrollbar {
-  width: 16px;
+  width: 8px;
 }
 
 #messages::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--bg-panel);
+  border-radius: 4px;
 }
 
 #messages::-webkit-scrollbar-thumb {
-  background: var(--border-light);
+  background: var(--accent-dim);
   border-radius: 4px;
+  border: 2px solid var(--bg-panel);
+}
+
+#messages::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
 }
 
 #messages>acb-empty-state {
@@ -2396,4 +2407,272 @@ acb-confirm-dialog .confirm-actions {
     width: 36px;
     height: 36px;
   }
+}
+
+/* ====================================================================================
+   UI-08: Scroll-to-top button
+==================================================================================== */
+.scroll-top-btn {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  z-index: 100;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(59, 130, 246, .45);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease, background .15s ease;
+}
+
+.scroll-top-btn.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.scroll-top-btn:hover {
+  background: var(--accent-dim);
+}
+
+.scroll-top-btn:active {
+  transform: scale(.93);
+}
+
+/* ====================================================================================
+   UI-02: Search bar
+==================================================================================== */
+#search-bar {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+#search-bar.visible {
+  display: flex;
+}
+
+.search-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  transition: border-color .15s ease;
+}
+
+.search-bar-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.search-icon {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+#search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+#search-input::placeholder {
+  color: var(--text-3);
+}
+
+.search-counter {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  min-width: 48px;
+  text-align: right;
+}
+
+.search-nav-btn,
+.search-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border-radius: 4px;
+  transition: color .15s ease, background .15s ease;
+  flex-shrink: 0;
+}
+
+.search-nav-btn:hover,
+.search-close-btn:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.search-close-btn {
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+/* Pills row */
+.search-pills-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.search-pills-label {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.search-pill {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-input);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+  white-space: nowrap;
+}
+
+.search-pill:hover {
+  border-color: var(--accent);
+  color: var(--text-1);
+}
+
+.search-pill.active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-pills-sep {
+  flex: 1;
+}
+
+/* Toggle button active state */
+#search-toggle-btn.active {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+/* All-threads results dropdown */
+.search-all-results {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  max-height: 320px;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+
+.search-all-results.visible {
+  display: block;
+}
+
+.search-result-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background .1s ease;
+}
+
+.search-result-item:last-child {
+  border-bottom: none;
+}
+
+.search-result-item:hover,
+.search-result-item.search-result-active {
+  background: var(--bg-hover);
+}
+
+.search-result-topic {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+
+.search-result-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+
+.search-result-snippet {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.search-result-snippet mark {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.search-no-results {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+/* Message highlight / dim (current-thread search) */
+.msg-row.search-dim {
+  opacity: .3;
+  transition: opacity .2s ease;
+}
+
+.msg-row.search-highlight {
+  opacity: 1;
+  transition: opacity .2s ease;
+}
+
+.msg-row.search-match-active .bubble-v2 {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+mark.search-match {
+  background: rgba(59, 130, 246, .25);
+  color: var(--accent);
+  border-radius: 2px;
+  padding: 0 1px;
 }
