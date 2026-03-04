@@ -42,30 +42,15 @@
 
   function getTooltipText(target) {
     if (!target) return "";
-    const dataText = target.getAttribute("data-tooltip");
-    if (dataText && dataText.trim()) return dataText.trim();
-
-    const titleText = target.getAttribute("title");
-    if (titleText && titleText.trim()) return titleText.trim();
-    return "";
+    return target.getAttribute("data-tooltip") || target.getAttribute("data-acb-tooltip") || "";
   }
 
   function suppressNativeTitle(target) {
-    if (!target) return;
-    const title = target.getAttribute("title");
-    if (!title) return;
-    if (!target.hasAttribute("data-title-backup")) {
-      target.setAttribute("data-title-backup", title);
+    if (target && target.hasAttribute("title")) {
+      const val = target.getAttribute("title") || "";
+      if (val) target.setAttribute("data-acb-tooltip", val);
+      target.removeAttribute("title");
     }
-    target.removeAttribute("title");
-  }
-
-  function restoreNativeTitle(target) {
-    if (!target) return;
-    if (!target.hasAttribute("data-title-backup")) return;
-    const backup = target.getAttribute("data-title-backup") || "";
-    target.removeAttribute("data-title-backup");
-    if (backup) target.setAttribute("title", backup);
   }
 
   function positionTooltip(target) {
@@ -97,9 +82,9 @@
     const text = getTooltipText(target);
     if (!text) return;
 
+    clearHideTimer();
     ensureTooltipEl();
     manualMode = false;
-    suppressNativeTitle(target);
     activeTarget = target;
     tooltipEl.className = "";
     tooltipEl.style.width = "";
@@ -122,14 +107,13 @@
     manualMode = false;
     tooltipEl.style.opacity = "0";
     tooltipEl.style.transform = "translateY(2px)";
-    setTimeout(() => {
+
+    hideTimer = setTimeout(() => {
       if (!tooltipEl) return;
       tooltipEl.style.display = "none";
+      hideTimer = null;
     }, 120);
 
-    if (activeTarget) {
-      restoreNativeTitle(activeTarget);
-    }
     activeTarget = null;
   }
 
@@ -170,10 +154,7 @@
 
   function findTooltipTarget(node) {
     if (!(node instanceof Element)) return null;
-    const target = node.closest("[data-tooltip], [title]");
-    if (!target) return null;
-
-    return target;
+    return node.closest("[data-tooltip], [title], [data-acb-tooltip]");
   }
 
   function init() {
@@ -183,6 +164,7 @@
       if (manualMode) return;
       const target = findTooltipTarget(e.target);
       if (!target) return;
+      suppressNativeTitle(target);
       if (activeTarget === target) return;
       showTooltip(target);
     });
@@ -192,13 +174,17 @@
       if (!activeTarget) return;
       const toEl = e.relatedTarget;
       if (toEl instanceof Element && activeTarget.contains(toEl)) return;
-      hideTooltip();
+
+      // Use scheduleHide with a tiny delay (80ms) to bridge 1px gaps between items
+      // and prevent flickering on small targets like the minimap.
+      scheduleHide(80);
     });
 
     document.addEventListener("focusin", (e) => {
       if (manualMode) return;
       const target = findTooltipTarget(e.target);
       if (!target) return;
+      suppressNativeTitle(target);
       showTooltip(target);
     });
 
