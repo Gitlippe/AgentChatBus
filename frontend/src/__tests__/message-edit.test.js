@@ -90,7 +90,11 @@ function installGlobals(apiFn) {
         }
         indicator.title = `Edited (v${resp.version})`;
         indicator.textContent = 'edited';
-        window.AcbMsgEditCancel(row);
+        // Close editing mode without restoring old content (cancel would overwrite new text)
+        row.classList.remove('msg-editing');
+        const editBtn = row.querySelector('.msg-edit-btn');
+        if (editBtn) editBtn.disabled = false;
+        delete bubbleEl.dataset.originalContent;
       } catch (err) {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save';
@@ -308,6 +312,8 @@ describe('UP-21: Save edit', () => {
     const indicator = row.querySelector('.msg-edited-indicator');
     expect(indicator).not.toBeNull();
     expect(indicator.textContent).toBe('edited');
+    // bubble content must be the NEW text, not the original (regression guard for originalContent bug)
+    expect(row.querySelector('.bubble-v2').textContent).toBe('new text');
   });
 
   it('no_change response cancels editing without creating indicator', async () => {

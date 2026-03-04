@@ -1579,7 +1579,11 @@ Note: Thread name is the topic label. Thread ID is the unique identifier.`;
           }
           indicator.title = `Edited (v${resp.version})`;
           indicator.textContent = 'edited';
-          window.AcbMsgEditCancel(row);
+          // Close editing mode without restoring old content (cancel would overwrite new text)
+          row.classList.remove('msg-editing');
+          const editBtn = row.querySelector('.msg-edit-btn');
+          if (editBtn) editBtn.disabled = false;
+          delete bubbleEl.dataset.originalContent;
         } catch (err) {
           saveBtn.disabled = false;
           saveBtn.textContent = 'Save';
