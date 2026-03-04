@@ -32,6 +32,7 @@ from src.db.crud import (
     ReplyTokenExpiredError,
     ReplyTokenReplayError,
     MessageNotFoundError,
+    MessageEditNoChangeError,
 )
 from src.db.models import Message
 import src.mcp_server
@@ -602,6 +603,79 @@ async def handle_msg_search(db, arguments: dict[str, Any]) -> list[types.TextCon
     }))]
 
 
+async def handle_msg_edit(db, arguments: dict[str, Any]) -> list[types.TextContent]:
+    """Handle msg_edit MCP tool (UP-21) — edit a message's content."""
+    message_id = str(arguments.get("message_id", "")).strip()
+    new_content = str(arguments.get("new_content", "")).strip()
+    if not message_id or not new_content:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "message_id and new_content are required",
+        }))]
+
+    # Deduce edited_by from the connected agent (same pattern as msg_post)
+    connection_agent_id, _ = src.mcp_server.get_connection_agent()
+    edited_by = connection_agent_id or "system"
+
+    try:
+        edit = await crud.msg_edit(db, message_id, new_content, edited_by)
+    except MessageEditNoChangeError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "no_change": True,
+            "version": e.current_version,
+        }))]
+    except PermissionError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": str(e),
+        }))]
+    except crud.MessageNotFoundError:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": f"Message '{message_id}' not found",
+        }))]
+    except ContentFilterError as e:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": f"Content blocked by filter: {e}",
+        }))]
+
+    return [types.TextContent(type="text", text=json.dumps({
+        "msg_id": message_id,
+        "version": edit.version,
+        "edited_at": edit.created_at.isoformat(),
+        "edited_by": edit.edited_by,
+    }))]
+
+
+async def handle_msg_edit_history(db, arguments: dict[str, Any]) -> list[types.TextContent]:
+    """Handle msg_edit_history MCP tool (UP-21) — retrieve full edit history of a message."""
+    message_id = str(arguments.get("message_id", "")).strip()
+    if not message_id:
+        return [types.TextContent(type="text", text=json.dumps({
+            "error": "message_id is required",
+        }))]
+
+    msg = await crud.msg_get(db, message_id)
+    if msg is None:
+        return [types.TextContent(type="text", text=json.dumps({
+            "found": False,
+            "message_id": message_id,
+        }))]
+
+    edits = await crud.msg_edit_history(db, message_id)
+    return [types.TextContent(type="text", text=json.dumps({
+        "message_id": message_id,
+        "current_content": msg.content,
+        "edit_version": msg.edit_version,
+        "edits": [
+            {
+                "version": e.version,
+                "old_content": e.old_content,
+                "edited_by": e.edited_by,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in edits
+        ],
+    }))]
+
+
 async def handle_msg_get(db, arguments: dict[str, Any]) -> list[types.TextContent]:
     """Handle msg_get MCP tool (UP-24) — fetch a single message by ID."""
     message_id = str(arguments.get("message_id", "")).strip()
@@ -622,6 +696,8 @@ async def handle_msg_get(db, arguments: dict[str, Any]) -> list[types.TextConten
             "reply_to_msg_id": msg.reply_to_msg_id,
             "metadata": msg.metadata,
             "created_at": msg.created_at,
+            "edited_at": msg.edited_at.isoformat() if msg.edited_at else None,
+            "edit_version": msg.edit_version,
             "reactions": [{"agent_id": r.agent_id, "reaction": r.reaction} for r in reactions],
         },
     }
@@ -930,6 +1006,8 @@ TOOLS_DISPATCH = {
     "msg_react": handle_msg_react,
     "msg_unreact": handle_msg_unreact,
     "msg_search": handle_msg_search,
+    "msg_edit": handle_msg_edit,
+    "msg_edit_history": handle_msg_edit_history,
     "agent_register": handle_agent_register,
     "agent_heartbeat": handle_agent_heartbeat,
     "agent_resume": handle_agent_resume,

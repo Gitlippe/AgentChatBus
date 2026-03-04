@@ -698,6 +698,48 @@ async def init_schema(db: aiosqlite.Connection) -> None:
     except Exception as e:
         logger.error(f"Migration backfill for messages_fts failed: {e}")
 
+    # Migration: Add edited_at and edit_version columns to messages (UP-21)
+    await _add_column_if_missing(db, "messages", "edited_at", "TEXT")
+    await _add_column_if_missing(db, "messages", "edit_version", "INTEGER NOT NULL DEFAULT 0")
+
+    # Migration: Create message_edits table for full version history (UP-21)
+    # Append-only: each row captures one edit event (old_content before the change).
+    try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS message_edits (
+                id          TEXT PRIMARY KEY,
+                message_id  TEXT NOT NULL REFERENCES messages(id),
+                old_content TEXT NOT NULL,
+                edited_by   TEXT NOT NULL,
+                version     INTEGER NOT NULL,
+                created_at  TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_message_edits_msg ON message_edits(message_id, version)"
+        )
+        await db.commit()
+        logger.info("Migration: ensured message_edits table + index exist (UP-21)")
+    except Exception as e:
+        logger.error(f"Migration failed for message_edits table: {e}")
+
+    # Migration: FTS5 update trigger — keeps messages_fts in sync when content is edited (UP-21)
+    # SQLite FTS5 has no UPDATE; pattern is DELETE old row + INSERT new row.
+    try:
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS messages_fts_update
+            AFTER UPDATE OF content ON messages
+            BEGIN
+                DELETE FROM messages_fts WHERE message_id = OLD.id;
+                INSERT INTO messages_fts(message_id, thread_id, author, content)
+                VALUES (NEW.id, NEW.thread_id, NEW.author, NEW.content);
+            END
+        """)
+        await db.commit()
+        logger.info("Migration: ensured messages_fts_update trigger exists (UP-21)")
+    except Exception as e:
+        logger.error(f"Migration failed for messages_fts_update trigger: {e}")
+
     # Seed built-in thread templates (UP-18) — idempotent via INSERT OR IGNORE
     await _seed_builtin_templates(db)
 
