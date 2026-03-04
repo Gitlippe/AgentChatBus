@@ -10,7 +10,6 @@ import httpx
 
 from src.db.database import init_schema
 from src.db import crud
-from src.db.crud import MessageEditNoChangeError, MessageNotFoundError
 from tests._constants import TEST_BASE_URL as BASE_URL
 
 
@@ -168,10 +167,10 @@ async def test_msg_edit_same_content_raises_noop():
     t = await crud.thread_create(db, "edit-test")
     msg = await _post(db, t.id, "agent-a", "same content")
 
-    caught: MessageEditNoChangeError | None = None
+    caught = None
     try:
         await crud.msg_edit(db, msg.id, "same content", "agent-a")
-    except MessageEditNoChangeError as exc:
+    except crud.MessageEditNoChangeError as exc:
         caught = exc
 
     assert caught is not None, "MessageEditNoChangeError was not raised"
@@ -187,10 +186,10 @@ async def test_msg_edit_noop_carries_current_version():
 
     await crud.msg_edit(db, msg.id, "v1", "agent-a")
 
-    caught: MessageEditNoChangeError | None = None
+    caught = None
     try:
         await crud.msg_edit(db, msg.id, "v1", "agent-a")  # same as current
-    except MessageEditNoChangeError as exc:
+    except crud.MessageEditNoChangeError as exc:
         caught = exc
 
     assert caught is not None, "MessageEditNoChangeError was not raised"
@@ -203,10 +202,10 @@ async def test_msg_edit_nonexistent_message():
     db = await _make_db()
     await init_schema(db)
 
-    caught: MessageNotFoundError | None = None
+    caught = None
     try:
         await crud.msg_edit(db, "nonexistent-id", "content", "agent-a")
-    except MessageNotFoundError as exc:
+    except crud.MessageNotFoundError as exc:
         caught = exc
 
     assert caught is not None, "MessageNotFoundError was not raised"
