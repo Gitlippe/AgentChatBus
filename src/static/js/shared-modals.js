@@ -102,7 +102,7 @@
     // UI-14: get or register a browser-session agent to provide auth for thread creation
     const uiAgent = window.AcbUiAgent ? await window.AcbUiAgent.ensureUiAgent() : null;
     if (!uiAgent) {
-      console.error("[Thread Create] Could not obtain UI agent token — cannot create thread");
+      console.error("[Thread Create] Could not obtain UI agent token -- cannot create thread");
       return;
     }
 

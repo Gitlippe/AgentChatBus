@@ -10,7 +10,7 @@
         const parsed = JSON.parse(cached);
         if (parsed.agent_id && parsed.token) return parsed;
       } catch (_) {
-        // corrupted — fall through to re-register
+        // corrupted -- fall through to re-register
       }
     }
 
