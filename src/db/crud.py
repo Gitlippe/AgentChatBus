@@ -2155,6 +2155,9 @@ async def msg_edit(
     if msg is None:
         raise MessageNotFoundError(message_id)
 
+    if msg.role == "system":
+        raise PermissionError("System messages cannot be edited")
+
     if msg.author != edited_by and edited_by != "system":
         raise PermissionError(
             f"Only the original author ('{msg.author}') or 'system' can edit this message"

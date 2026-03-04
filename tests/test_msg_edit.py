@@ -155,6 +155,27 @@ async def test_msg_edit_system_can_edit_any_message():
 
 
 @pytest.mark.asyncio
+async def test_msg_edit_system_role_cannot_be_edited():
+    """Messages with role='system' cannot be edited (PermissionError)."""
+    db = await _make_db()
+    t = await crud.thread_create(db, "edit-test")
+    sync = await crud.issue_reply_token(db, thread_id=t.id)
+    sys_msg = await crud.msg_post(
+        db,
+        thread_id=t.id,
+        author="system",
+        content="system event",
+        expected_last_seq=0,
+        reply_token=sync["reply_token"],
+        role="system",
+    )
+
+    with pytest.raises(PermissionError, match="System messages cannot be edited"):
+        await crud.msg_edit(db, sys_msg.id, "tampered content", "system")
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_msg_edit_same_content_raises_noop():
     """MessageEditNoChangeError is raised when new_content equals current content."""
     db = await _make_db()
@@ -315,19 +336,21 @@ def _require_server_or_skip(client: httpx.Client) -> None:
 
 
 def _create_thread_and_message(client: httpx.Client, topic_suffix: str) -> tuple[str, str]:
-    """Create a thread + post one message, return (thread_id, msg_id)."""
+    """Create a thread + post one message, return (thread_id, msg_id, agent_id)."""
     agent_resp = client.post("/api/agents/register", json={
         "name": "test-edit-agent",
         "ide": "pytest",
         "model": "test",
         "description": "integration test agent for edit",
     })
-    agent_id = agent_resp.json()["agent_id"]
+    agent_data = agent_resp.json()
+    agent_id = agent_data["agent_id"]
+    agent_token = agent_data["token"]
 
     thread_resp = client.post("/api/threads", json={
         "topic": f"edit-test-{topic_suffix}",
         "creator_agent_id": agent_id,
-    })
+    }, headers={"X-Agent-Token": agent_token})
     thread_id = thread_resp.json()["id"]
 
     sync_resp = client.post(f"/api/threads/{thread_id}/sync-context", json={"agent_id": agent_id})
@@ -338,9 +361,12 @@ def _create_thread_and_message(client: httpx.Client, topic_suffix: str) -> tuple
         "content": "original message for edit test",
         "expected_last_seq": sync["current_seq"],
         "reply_token": sync["reply_token"],
-    })
-    msg_id = msg_resp.json()["id"]
-    return thread_id, msg_id, agent_id
+    }, headers={"X-Agent-Token": agent_token})
+    msg_data = msg_resp.json()
+    msg_id = msg_data["id"]
+    # msg.author is the display name resolved by the server, not the UUID
+    author_name = msg_data.get("author", agent_id)
+    return thread_id, msg_id, author_name
 
 
 def test_api_edit_message_200():

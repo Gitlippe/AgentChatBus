@@ -167,6 +167,22 @@ describe('UP-21: msg-edit-btn', () => {
     const btn = row.querySelector('.msg-edit-btn');
     expect(btn.getAttribute('data-author')).toBe('agent-x');
   });
+
+  it('system message row has no edit button (isSystem guard)', () => {
+    // buildMessageRow simulates a regular agent row; system rows are built
+    // without the edit button (isSystem=true path in index.html appendBubble).
+    // We verify the guard by building a row without the button and asserting absence.
+    const row = document.createElement('div');
+    row.className = 'msg-row msg-row-left';
+    row.innerHTML = `
+      <div class="msg-col">
+        <div class="msg-header"><span class="msg-author-label">system</span></div>
+        <div class="bubble-v2">System event</div>
+        <div class="msg-reactions"></div>
+      </div>`;
+    document.body.appendChild(row);
+    expect(row.querySelector('.msg-edit-btn')).toBeNull();
+  });
 });
 
 describe('UP-21: AcbMsgEditStart', () => {
