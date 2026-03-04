@@ -1,8 +1,8 @@
-"""
+﻿"""
 Unit and integration tests for UP-21: message edit/versioning.
 
 Unit tests use an in-memory SQLite DB via aiosqlite + init_schema.
-Integration tests use httpx against the test server (port 39769).
+Integration tests use httpx against the test server (TEST_BASE_URL from _constants).
 """
 import pytest
 import aiosqlite
@@ -11,12 +11,7 @@ import httpx
 from src.db.database import init_schema
 from src.db import crud
 from src.db.crud import MessageEditNoChangeError, MessageNotFoundError
-
-# ── Integration server base URL (from shared _constants) ─────────────────────
-try:
-    from tests._constants import TEST_BASE_URL as BASE_URL
-except ImportError:
-    BASE_URL = "http://127.0.0.1:39769"
+from tests._constants import TEST_BASE_URL as BASE_URL
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -45,7 +40,6 @@ async def _post(db, thread_id, author, content):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_updates_content():
     """msg_edit replaces messages.content with the new value."""
     db = await _make_db()
@@ -59,7 +53,6 @@ async def test_msg_edit_updates_content():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_creates_history_entry():
     """msg_edit inserts a record in message_edits with old_content."""
     db = await _make_db()
@@ -76,7 +69,6 @@ async def test_msg_edit_creates_history_entry():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_increments_version():
     """Each successive edit increments version by 1."""
     db = await _make_db()
@@ -95,7 +87,6 @@ async def test_msg_edit_increments_version():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_sets_edited_at():
     """msg_edit sets messages.edited_at to a non-null datetime."""
     db = await _make_db()
@@ -112,7 +103,6 @@ async def test_msg_edit_sets_edited_at():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_preserves_old_content():
     """old_content in message_edits matches the pre-edit content exactly."""
     db = await _make_db()
@@ -127,7 +117,6 @@ async def test_msg_edit_preserves_old_content():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_author_only_permission():
     """PermissionError when edited_by does not match the original author."""
     db = await _make_db()
@@ -139,7 +128,6 @@ async def test_msg_edit_author_only_permission():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_system_can_edit_any_message():
     """'system' is allowed to edit any message regardless of author."""
     db = await _make_db()
@@ -154,7 +142,6 @@ async def test_msg_edit_system_can_edit_any_message():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_system_role_cannot_be_edited():
     """Messages with role='system' cannot be edited (PermissionError)."""
     db = await _make_db()
@@ -175,7 +162,6 @@ async def test_msg_edit_system_role_cannot_be_edited():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_same_content_raises_noop():
     """MessageEditNoChangeError is raised when new_content equals current content."""
     db = await _make_db()
@@ -189,7 +175,6 @@ async def test_msg_edit_same_content_raises_noop():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_noop_carries_current_version():
     """MessageEditNoChangeError.current_version reflects post-edit state."""
     db = await _make_db()
@@ -205,7 +190,6 @@ async def test_msg_edit_noop_carries_current_version():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_nonexistent_message():
     """MessageNotFoundError is raised when message_id does not exist."""
     db = await _make_db()
@@ -216,7 +200,6 @@ async def test_msg_edit_nonexistent_message():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_updates_fts_index():
     """After edit, msg_search returns results for the new content, not the old."""
     db = await _make_db()
@@ -235,7 +218,6 @@ async def test_msg_edit_updates_fts_index():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_history_returns_all_versions():
     """msg_edit_history returns one entry per edit performed."""
     db = await _make_db()
@@ -252,7 +234,6 @@ async def test_msg_edit_history_returns_all_versions():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_history_empty_for_unedited_message():
     """msg_edit_history returns [] when no edits have been applied."""
     db = await _make_db()
@@ -264,7 +245,6 @@ async def test_msg_edit_history_empty_for_unedited_message():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_edit_history_ordered_by_version():
     """msg_edit_history entries are ordered by version ascending."""
     db = await _make_db()
@@ -281,7 +261,6 @@ async def test_msg_edit_history_ordered_by_version():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_list_includes_edit_fields():
     """msg_list response includes edited_at (None) and edit_version (0) for new messages."""
     db = await _make_db()
@@ -298,7 +277,6 @@ async def test_msg_list_includes_edit_fields():
     await db.close()
 
 
-@pytest.mark.asyncio
 async def test_msg_list_reflects_edit_fields_after_edit():
     """msg_list shows non-null edited_at and incremented edit_version after an edit."""
     db = await _make_db()
