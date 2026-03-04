@@ -33,6 +33,8 @@
 
     const box = document.getElementById("messages");
     box.innerHTML = "";
+    const sysPromptAreaEl = document.getElementById("sys-prompt-area");
+    if (sysPromptAreaEl) sysPromptAreaEl.innerHTML = "";
     box.classList.add("loading-history");
 
     const msgs =
