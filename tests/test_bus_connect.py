@@ -87,40 +87,8 @@ async def test_bus_connect_new_agent_existing_thread():
 
     await db.close()
 
-
 @pytest.mark.asyncio
-async def test_bus_connect_resume_existing_agent():
-    db = await aiosqlite.connect(":memory:")
-    db.row_factory = aiosqlite.Row
-    await init_schema(db)
-
-    # Pre-register an agent
-    existing_agent = await crud.agent_register(db, ide="ExistingIDE", model="ExModel")
-
-    args = {
-        "thread_name": "Brand New Thread",
-        "agent_id": existing_agent.id,
-        "token": existing_agent.token
-        # ide and model are provided but should be ignored since we resume
-    }
-
-    result = await handle_bus_connect(db, args)
-    payload = json.loads(result[0].text)
-    
-    # Agent should be resumed, not newly registered
-    assert payload["agent"]["registered"] is False
-    assert payload["agent"]["agent_id"] == existing_agent.id
-    assert "token" not in payload["agent"] # not returned on resume
-
-    # Thread should be created
-    assert payload["thread"]["created"] is True
-    assert payload["thread"]["topic"] == "Brand New Thread"
-
-    await db.close()
-
-
-@pytest.mark.asyncio
-async def test_bus_connect_reuse_connection_agent():
+async def test_bus_connect_no_reuse_agent():
     db = await aiosqlite.connect(":memory:")
     db.row_factory = aiosqlite.Row
     await init_schema(db)
@@ -132,14 +100,14 @@ async def test_bus_connect_reuse_connection_agent():
     assert p1["agent"]["registered"] is True
     agent_id1 = p1["agent"]["agent_id"]
 
-    # Second call (same connection/session): joins another thread
+    # Second call (same connection/session): joins another thread without explicitly providing agent_id
     args2 = {"thread_name": "Thread2"}
     r2 = await handle_bus_connect(db, args2)
     p2 = json.loads(r2[0].text)
     
-    # Should reuse the same agent
-    assert p2["agent"]["registered"] is False
-    assert p2["agent"]["agent_id"] == agent_id1
+    # Should NOT reuse the same agent, must register a new one
+    assert p2["agent"]["registered"] is True
+    assert p2["agent"]["agent_id"] != agent_id1
     assert p2["thread"]["topic"] == "Thread2"
     assert p2["thread"]["created"] is True
 

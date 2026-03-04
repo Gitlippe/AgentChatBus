@@ -32,24 +32,14 @@ dispatch.py
 python
 async def handle_bus_connect(db, arguments):
     # ── 阶段 1: Agent 身份 ──
-    explicit_id = arguments.get("agent_id")
-    explicit_token = arguments.get("token")
-    conn_id, conn_token = src.mcp_server.get_connection_agent()
-    if explicit_id and explicit_token:
-        # 显式传了凭证 → resume
-        agent = await crud.agent_resume(db, explicit_id, explicit_token)
-        newly_registered = False
-    elif conn_id:
-        # 同 session 已有身份 → 复用
-        agent = await crud.agent_get(db, conn_id)
-        newly_registered = False
-    else:
-        # 全新注册
-        ide = arguments.get("ide", "Unknown IDE")
-        model = arguments.get("model", "Unknown Model")
-        agent = await crud.agent_register(db, ide=ide, model=model)
-        newly_registered = True
+    # 取消 agent_id/token 支持，一律全新注册
+    ide = arguments.get("ide", "Unknown IDE")
+    model = arguments.get("model", "Unknown Model")
+    agent = await crud.agent_register(db, ide=ide, model=model)
+    
     src.mcp_server.set_connection_agent(agent.id, agent.token)
+    src.mcp_server._current_agent_id.set(agent.id)
+    src.mcp_server._current_agent_token.set(agent.token)
     # ── 阶段 2: Thread 查找/创建 ──
     thread_name = arguments["thread_name"]
     thread = await crud.thread_get_by_topic(db, thread_name)
@@ -66,9 +56,7 @@ async def handle_bus_connect(db, arguments):
     msgs = await crud.msg_list(db, thread.id, after_seq=after_seq)
     sync = await crud.issue_reply_token(db, thread.id, agent_id=agent.id)
     # ── 组装返回 ──
-    agent_payload = {"agent_id": agent.id, "name": agent.name, "registered": newly_registered}
-    if newly_registered:
-        agent_payload["token"] = agent.token
+    agent_payload = {"agent_id": agent.id, "name": agent.name, "registered": True, "token": agent.token}
     return [types.TextContent(type="text", text=json.dumps({
         "agent": agent_payload,
         "thread": {
@@ -108,12 +96,7 @@ diff
 +            "join_or_create_thread": {
 +                "tool": "bus_connect",
 +                "input": {"thread_name": "My Topic", "ide": "Cursor", "model": "Claude"},
-+                "note": "One call: auto-registers agent, joins or creates thread, returns messages + sync context.",
-+            },
-+            "resume_existing_session": {
-+                "tool": "bus_connect",
-+                "input": {"thread_name": "My Topic", "agent_id": "<saved>", "token": "<saved>"},
-+                "note": "Resume a previously registered agent and join thread.",
++                "note": "One call: auto-registers agent, joins or creates thread, returns messages + sync context. For resuming an existing identity, use 'agent_resume' explicitly instead.",
 +            },
          },
 MCP Tool 定义
@@ -127,7 +110,7 @@ python
 types.Tool(
     name="bus_connect",
     description=(
-        "One-step connect: register (or resume) an agent and join (or create) a thread. "
+        "One-step connect: register an agent and join (or create) a thread. "
         "Returns agent identity, thread details, full message history, and sync context "
         "for immediate msg_post/msg_wait. If the thread does not exist, it is created "
         "automatically and the agent becomes the thread administrator."
@@ -138,13 +121,9 @@ types.Tool(
             "thread_name": {"type": "string",
                             "description": "Thread topic name to join or create."},
             "ide":         {"type": "string",
-                            "description": "IDE name for new registration (ignored if agent_id+token provided)."},
+                            "description": "IDE name for new registration."},
             "model":       {"type": "string",
                             "description": "Model name for new registration."},
-            "agent_id":    {"type": "string",
-                            "description": "Existing agent ID to resume (optional)."},
-            "token":       {"type": "string",
-                            "description": "Agent token for resume (required with agent_id)."},
             "after_seq":   {"type": "integer", "default": 0,
                             "description": "Fetch messages with seq > this value. Default 0 (all)."},
         },
@@ -163,8 +142,7 @@ Automated Tests
 测试用例	验证点
 test_bus_connect_new_agent_existing_thread	新注册 + 加入已有 thread，返回消息和 token
 test_bus_connect_new_agent_new_thread	新注册 + 自动创建 thread，thread_created=true，agent 是管理员
-test_bus_connect_resume_agent	传 agent_id+token resume 身份，返回 registered=false
-test_bus_connect_resumed_agent_new_thread	resume 后创建 thread，agent 是管理员
+test_bus_connect_no_reuse_agent	在同一连接调用两次，确认不共享 ID，生成各自独立的注册身份
 运行命令：
 
 bash

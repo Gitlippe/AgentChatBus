@@ -189,33 +189,14 @@ def _message_to_blocks(m: Message) -> list[types.Content]:
     return blocks
 
 async def handle_bus_connect(db, arguments: dict[str, Any]) -> list[types.TextContent]:
-    # ── Phase 1: Determine Agent Identity ──
-    explicit_id = arguments.get("agent_id")
-    explicit_token = arguments.get("token")
-    conn_id, conn_token = src.mcp_server.get_connection_agent()
-
-    if explicit_id and explicit_token:
-        # Resume existing agent
-        agent = await crud.agent_resume(db, explicit_id, explicit_token)
-        newly_registered = False
-    elif conn_id:
-        # Reuse connection agent
-        agent = await crud.agent_get(db, conn_id)
-        if not agent:
-            return [types.TextContent(type="text", text=json.dumps({"error": "Connection agent not found in database"}))]
-        newly_registered = False
-    else:
-        # Register new agent
-        ide = arguments.get("ide", "Unknown IDE")
-        model = arguments.get("model", "Unknown Model")
-        agent = await crud.agent_register(db, ide=ide, model=model)
-        newly_registered = True
+    # ── Phase 1: Register New Agent ──
+    ide = arguments.get("ide", "Unknown IDE")
+    model = arguments.get("model", "Unknown Model")
+    agent = await crud.agent_register(db, ide=ide, model=model)
 
     src.mcp_server.set_connection_agent(agent.id, agent.token)
-    
-    if newly_registered:
-        src.mcp_server._current_agent_id.set(agent.id)
-        src.mcp_server._current_agent_token.set(agent.token)
+    src.mcp_server._current_agent_id.set(agent.id)
+    src.mcp_server._current_agent_token.set(agent.token)
 
     # ── Phase 2: Find or Create Thread ──
     thread_name = arguments.get("thread_name")
@@ -243,10 +224,9 @@ async def handle_bus_connect(db, arguments: dict[str, Any]) -> list[types.TextCo
     agent_payload: dict[str, Any] = {
         "agent_id": agent.id,
         "name": agent.name,
-        "registered": newly_registered,
+        "registered": True,
+        "token": agent.token
     }
-    if newly_registered:
-        agent_payload["token"] = agent.token
 
     return [types.TextContent(type="text", text=json.dumps({
         "agent": agent_payload,
@@ -301,12 +281,7 @@ async def handle_bus_get_config(db, arguments: dict[str, Any]) -> list[types.Tex
             "join_or_create_thread": {
                 "tool": "bus_connect",
                 "input": {"thread_name": "My Topic", "ide": "Cursor", "model": "Claude"},
-                "note": "One call: auto-registers agent, joins or creates thread, returns messages + sync context.",
-            },
-            "resume_existing_session": {
-                "tool": "bus_connect",
-                "input": {"thread_name": "My Topic", "agent_id": "<saved>", "token": "<saved>"},
-                "note": "Resume a previously registered agent and join thread.",
+                "note": "One call: auto-registers agent, joins or creates thread, returns messages + sync context. For resuming an existing identity, use 'agent_resume' explicitly instead.",
             },
         },
     }))]
