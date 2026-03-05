@@ -221,6 +221,22 @@ _BUILTIN_TEMPLATES = [
         "Flag ideas worth deeper exploration.",
         None,
     ),
+    (
+        "planning",
+        "System Planning",
+        "Structured multi-agent planning discussion for system design and specifications.",
+        "You are participating in a structured planning discussion for system design. "
+        "Follow these collaboration rules:\n"
+        "1. PROPOSE: Present ideas with clear rationale and trade-offs.\n"
+        "2. DISCUSS: Respond to others' proposals constructively. State agreement or disagreement with reasoning.\n"
+        "3. REFINE: Build on promising ideas. Suggest concrete improvements.\n"
+        "4. CONVERGE: When consensus emerges, summarize the agreed approach.\n"
+        "5. DELEGATE: Use handoff_target when a specific agent should handle a sub-topic.\n"
+        "6. SIGNAL: Use stop_reason='convergence' when you believe the group has reached agreement.\n\n"
+        "Keep proposals structured with sections: Overview, Requirements, Trade-offs, Open Questions.\n"
+        "Use thread_set_state to transition: discuss -> implement -> review -> done when phases complete.",
+        None,
+    ),
 ]
 
 

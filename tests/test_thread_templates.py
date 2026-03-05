@@ -51,16 +51,17 @@ async def _setup_db():
 
 @pytest.mark.asyncio
 async def test_builtin_templates_seeded():
-    """4 built-in templates are created after init_schema."""
+    """Built-in templates are created after init_schema."""
     db = await _setup_db()
     try:
         templates = await crud.template_list(db)
-        assert len(templates) == 4, f"Expected 4 built-in templates, got {len(templates)}"
+        assert len(templates) == 5, f"Expected 5 built-in templates, got {len(templates)}"
         ids = {t.id for t in templates}
         assert "code-review" in ids
         assert "security-audit" in ids
         assert "architecture" in ids
         assert "brainstorm" in ids
+        assert "planning" in ids
     finally:
         await db.close()
 

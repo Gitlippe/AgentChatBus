@@ -536,6 +536,44 @@ async def handle_thread_get(db, arguments: dict[str, Any]) -> list[types.TextCon
         "summary": t.summary,
     }))]
 
+async def handle_thread_set_state(db, arguments: dict[str, Any]) -> list[types.TextContent]:
+    agent_id = arguments.get("agent_id")
+    token = arguments.get("token")
+    if not agent_id or not token:
+        return [types.TextContent(type="text", text=json.dumps({"error": "agent_id and token are required"}))]
+    valid = await crud.agent_verify_token(db, agent_id, token)
+    if not valid:
+        return [types.TextContent(type="text", text=json.dumps({"error": "Invalid agent_id or token"}))]
+    thread_id = arguments["thread_id"]
+    state = arguments["state"]
+    try:
+        ok = await crud.thread_set_state(db, thread_id, state)
+    except ValueError as e:
+        return [types.TextContent(type="text", text=json.dumps({"error": str(e)}))]
+    if not ok:
+        return [types.TextContent(type="text", text=json.dumps({"error": "Thread not found"}))]
+    return [types.TextContent(type="text", text=json.dumps({
+        "ok": True, "thread_id": thread_id, "state": state,
+    }))]
+
+async def handle_thread_close(db, arguments: dict[str, Any]) -> list[types.TextContent]:
+    agent_id = arguments.get("agent_id")
+    token = arguments.get("token")
+    if not agent_id or not token:
+        return [types.TextContent(type="text", text=json.dumps({"error": "agent_id and token are required"}))]
+    valid = await crud.agent_verify_token(db, agent_id, token)
+    if not valid:
+        return [types.TextContent(type="text", text=json.dumps({"error": "Invalid agent_id or token"}))]
+    thread_id = arguments["thread_id"]
+    summary = arguments.get("summary")
+    t = await crud.thread_get(db, thread_id)
+    if t is None:
+        return [types.TextContent(type="text", text=json.dumps({"error": "Thread not found"}))]
+    await crud.thread_close(db, thread_id, summary)
+    return [types.TextContent(type="text", text=json.dumps({
+        "ok": True, "thread_id": thread_id, "status": "closed", "summary": summary,
+    }))]
+
 async def handle_msg_post(db, arguments: dict[str, Any]) -> list[types.TextContent]:
     thread_id = arguments["thread_id"]
     
@@ -1285,6 +1323,8 @@ TOOLS_DISPATCH = {
     "thread_list": handle_thread_list,
     "thread_delete": handle_thread_delete,
     "thread_get": handle_thread_get,
+    "thread_set_state": handle_thread_set_state,
+    "thread_close": handle_thread_close,
     "msg_post": handle_msg_post,
     "msg_list": handle_msg_list,
     "msg_wait": handle_msg_wait,

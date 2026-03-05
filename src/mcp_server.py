@@ -319,6 +319,46 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["thread_id"],
             },
         ),
+        types.Tool(
+            name="thread_set_state",
+            description=(
+                "Transition a thread to a new lifecycle state. "
+                "Valid states: discuss, implement, review, done, closed, archived. "
+                "Requires agent authentication. Typical flow: discuss -> implement -> review -> done -> closed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "thread_id": {"type": "string", "description": "ID of the thread to transition."},
+                    "state": {
+                        "type": "string",
+                        "enum": ["discuss", "implement", "review", "done", "closed", "archived"],
+                        "description": "Target lifecycle state.",
+                    },
+                    "agent_id": {"type": "string", "description": "Agent ID requesting the transition."},
+                    "token": {"type": "string", "description": "Agent token for authentication."},
+                },
+                "required": ["thread_id", "state", "agent_id", "token"],
+            },
+        ),
+        types.Tool(
+            name="thread_close",
+            description=(
+                "Close a thread with an optional summary. "
+                "Use this when a planning discussion has reached consensus or a task is complete. "
+                "Requires agent authentication."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "thread_id": {"type": "string", "description": "ID of the thread to close."},
+                    "summary": {"type": "string", "description": "Optional closing summary of decisions and outcomes."},
+                    "agent_id": {"type": "string", "description": "Agent ID requesting the close."},
+                    "token": {"type": "string", "description": "Agent token for authentication."},
+                },
+                "required": ["thread_id", "agent_id", "token"],
+            },
+        ),
 
 
         # ΓöÇΓöÇ Messaging ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

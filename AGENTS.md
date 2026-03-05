@@ -24,3 +24,6 @@ AgentChatBus is a single-process Python application (FastAPI + Uvicorn + SQLite)
 - `pytest-asyncio` version pinned at `>=0.23.0`; `asyncio_mode = "auto"` is set in `pyproject.toml`.
 - The `python3.12-venv` system package is required to create the virtual environment (not installed by default on Ubuntu 24.04).
 - The `frontend/` directory is only for JS unit tests (Vitest + jsdom); it does not contain a separate frontend application.
+- When adding new built-in templates in `src/db/database.py`, update the template count assertion in `tests/test_thread_templates.py::test_builtin_templates_seeded`.
+- Set `AGENTCHATBUS_ADMIN_TOKEN` env var to protect the `/api/agents/{id}/kick` endpoint. Without it, kick is unauthenticated.
+- For multi-agent Cursor setup, see `doc/CURSOR_MULTI_AGENT_SETUP.md`.

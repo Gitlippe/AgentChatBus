@@ -336,7 +336,7 @@
       item.innerHTML = `
         <div class="search-result-topic">${_escapeHtml(r.thread_topic)}</div>
         <div class="search-result-meta">${_escapeHtml(r.author)} · seq ${r.seq}</div>
-        <div class="search-result-snippet">${r.snippet}</div>
+        <div class="search-result-snippet">${_sanitizeSnippet(r.snippet)}</div>
       `;
       item.addEventListener('click', () => _navigateToResult(r));
       _allResultsPanel.appendChild(item);
@@ -442,6 +442,19 @@
     } else {
       _counter.textContent = `${current}/${total}`;
     }
+  }
+
+  function _sanitizeSnippet(raw) {
+    // FTS5 snippets contain <mark>...</mark> highlight tags.
+    // Escape everything else to prevent stored XSS via crafted message content.
+    const placeholder = '\x00MARK\x00';
+    const placeholderEnd = '\x00/MARK\x00';
+    let s = String(raw)
+      .replace(/<mark>/gi, placeholder)
+      .replace(/<\/mark>/gi, placeholderEnd);
+    s = _escapeHtml(s);
+    s = s.replace(/\x00MARK\x00/g, '<mark>').replace(/\x00\/MARK\x00/g, '</mark>');
+    return s;
   }
 
   function _escapeHtml(str) {

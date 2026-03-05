@@ -1749,9 +1749,12 @@ async def agent_get(db: aiosqlite.Connection, agent_id: str) -> Optional[AgentIn
 
 async def agent_verify_token(db: aiosqlite.Connection, agent_id: str, token: str) -> bool:
     """Read-only token check — does not update last_seen or heartbeat."""
+    import hmac
     async with db.execute("SELECT token FROM agents WHERE id = ?", (agent_id,)) as cur:
         row = await cur.fetchone()
-    return row is not None and row["token"] == token
+    if row is None:
+        return False
+    return hmac.compare_digest(row["token"], token)
 
 
 async def agent_update(
