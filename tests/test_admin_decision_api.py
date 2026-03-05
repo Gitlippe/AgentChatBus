@@ -82,6 +82,16 @@ def test_admin_decision_switch_then_keep():
         system_msgs = [m for m in msgs if m.get("author") == "system" and m.get("role") == "system"]
         assert any("Administrator switched by human decision" in m.get("content", "") for m in system_msgs)
         assert any("Administrator kept by human decision" in m.get("content", "") for m in system_msgs)
+        assert any(
+            "Administrator switched by human decision" in m.get("content", "")
+            and '"visibility": "human_only"' in (m.get("metadata") or "")
+            for m in system_msgs
+        )
+        assert any(
+            "Administrator kept by human decision" in m.get("content", "")
+            and '"visibility": "human_only"' in (m.get("metadata") or "")
+            for m in system_msgs
+        )
 
 
 def test_admin_decision_switch_replaces_previous_admin():
@@ -329,6 +339,7 @@ def test_admin_decision_concurrent_submit_emits_single_switch_event():
             if "Administrator switched by human decision" in (m.get("content") or "")
         ]
         assert len(switched_msgs) == 1
+        assert '"visibility": "human_only"' in (switched_msgs[0].get("metadata") or "")
 
 
 def test_admin_takeover_decision_emits_targeted_instruction_and_cancel_is_recorded():

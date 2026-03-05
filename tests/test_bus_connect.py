@@ -223,3 +223,86 @@ async def test_bus_connect_token_makes_next_msg_wait_immediate_once():
     assert posted_payload2["seq"] == 1
 
     await db.close()
+
+
+@pytest.mark.asyncio
+async def test_msg_post_error_invalidate_tokens_uses_validated_author_when_no_connection_context():
+    db = await aiosqlite.connect(":memory:")
+    db.row_factory = aiosqlite.Row
+    await init_schema(db)
+
+    connect_out = await handle_bus_connect(
+        db,
+        {
+            "thread_name": "Author Fallback Invalidates",
+            "ide": "VS Code",
+            "model": "GPT-5.3-Codex",
+        },
+    )
+    connect_payload = json.loads(connect_out[0].text)
+    thread_id = connect_payload["thread"]["thread_id"]
+    agent_id = connect_payload["agent"]["agent_id"]
+    agent_token = connect_payload["agent"]["token"]
+
+    # Consume initial bus_connect token so agent starts clean.
+    await handle_msg_post(
+        db,
+        {
+            "thread_id": thread_id,
+            "author": agent_id,
+            "content": "seed",
+            "expected_last_seq": connect_payload["current_seq"],
+            "reply_token": connect_payload["reply_token"],
+            "role": "assistant",
+        },
+    )
+
+    waited = await handle_msg_wait(
+        db,
+        {
+            "thread_id": thread_id,
+            "after_seq": 1,
+            "timeout_ms": 1,
+            "return_format": "json",
+            "agent_id": agent_id,
+            "token": agent_token,
+        },
+    )
+    wait_payload = json.loads(waited[0].text)
+
+    # Simulate lost connection context.
+    src.mcp_server._current_agent_id.set(None)
+    src.mcp_server._current_agent_token.set(None)
+
+    # Force seq mismatch using stale expected_last_seq, should trigger token invalidation path.
+    err = await handle_msg_post(
+        db,
+        {
+            "thread_id": thread_id,
+            "author": agent_id,
+            "content": "stale post",
+            "expected_last_seq": 0,
+            "reply_token": wait_payload["reply_token"],
+            "role": "assistant",
+        },
+    )
+    err_payload = json.loads(err[0].text)
+    assert err_payload["error"] in {"SeqMismatchError", "ReplyTokenReplayError", "ReplyTokenInvalidError"}
+
+    # Next msg_wait should quick-return because issued tokens were invalidated.
+    waited2 = await handle_msg_wait(
+        db,
+        {
+            "thread_id": thread_id,
+            "after_seq": 1,
+            "timeout_ms": 1000,
+            "return_format": "json",
+            "agent_id": agent_id,
+            "token": agent_token,
+        },
+    )
+    wait_payload2 = json.loads(waited2[0].text)
+    assert wait_payload2["messages"] == []
+    assert "reply_token" in wait_payload2
+
+    await db.close()

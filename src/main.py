@@ -2249,6 +2249,7 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
             )
             metadata = {
                 "ui_type": "admin_switch_decision_result",
+                "visibility": "human_only",
                 "decision": "switch",
                 "thread_id": thread_id,
                 "source_message_id": body.source_message_id,
@@ -2297,6 +2298,7 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
             confirmation = f"Administrator kept by human decision: {kept_badge}."
             metadata = {
                 "ui_type": "admin_switch_decision_result",
+                "visibility": "human_only",
                 "decision": "keep",
                 "thread_id": thread_id,
                 "source_message_id": body.source_message_id,
