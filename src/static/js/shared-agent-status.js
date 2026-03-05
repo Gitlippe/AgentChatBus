@@ -4,8 +4,9 @@
    *
    * States (priority order):
    *   Listening — SSE connected + last_activity is msg_wait              (⏳)
-   *   Working   — SSE connected + NOT msg_wait + activity within 60s     (⚡)
-   *   Idle      — SSE connected + NOT msg_wait + activity older than 60s (🔌)
+   *   Working   — SSE connected + last_activity is msg_received/msg_post  (⚡)
+   *               (no timeout — agent may be on a long task)
+   *   Idle      — SSE connected + never entered message loop              (🔌)
    *               (SSE open but agent stopped responding — may be processing
    *               a long task or is a stale connection)
    *   Offline   — no SSE + heartbeat expired                             (⚫)
@@ -13,20 +14,21 @@
    * For stdio agents (no SSE): fall back to heartbeat-based detection.
    * stdio agents will show Listening when is_online=true, Offline otherwise.
    */
-  const WORKING_TIMEOUT_S = 60;
-
   function getAgentState(agent) {
     if (!agent) return "Offline";
 
     if (agent.is_sse_connected) {
       if (agent.last_activity === "msg_wait") return "Listening";
-      // Check how long ago the last activity was
-      const lastActivityTime = agent.last_activity_time ? new Date(agent.last_activity_time) : null;
-      if (lastActivityTime) {
-        const elapsedS = (Date.now() - lastActivityTime.getTime()) / 1000;
-        if (elapsedS > WORKING_TIMEOUT_S) return "Idle";
+      // msg_received: msg_wait just delivered a message, agent is processing.
+      // msg_post: agent just posted a reply, still in working cycle.
+      // No timeout — agent may be doing a long task (editing code, reasoning, etc.)
+      // SSE disconnect is the only reliable signal that work has truly stopped.
+      if (agent.last_activity === "msg_received" || agent.last_activity === "msg_post") {
+        return "Working";
       }
-      return "Working";
+      // Any other activity (registered, heartbeat, resume, etc.) with SSE open:
+      // agent is connected but hasn't entered the message loop yet → Idle.
+      return "Idle";
     }
 
     // stdio or truly offline — rely on heartbeat

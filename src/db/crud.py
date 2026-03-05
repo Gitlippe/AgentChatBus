@@ -1593,6 +1593,13 @@ async def agent_msg_wait(db: aiosqlite.Connection, agent_id: str, token: str) ->
     return await _set_agent_activity(db, agent_id, "msg_wait", touch_heartbeat=True)
 
 
+async def agent_msg_received(db: aiosqlite.Connection, agent_id: str) -> bool:
+    """Mark that agent has received a message from msg_wait and is now processing.
+    This transitions the agent from Listening → Working on the frontend.
+    """
+    return await _set_agent_activity(db, agent_id, "msg_received", touch_heartbeat=False)
+
+
 async def agent_msg_post(db: aiosqlite.Connection, agent_id: str) -> bool:
     return await _set_agent_activity(db, agent_id, "msg_post", touch_heartbeat=False)
 

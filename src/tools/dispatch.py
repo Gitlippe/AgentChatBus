@@ -848,6 +848,7 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
                         # Exit wait state only when returning a message to caller.
                         if agent_id:
                             await crud.thread_wait_exit(db, thread_id, agent_id)
+                            await crud.agent_msg_received(db, agent_id)
                         return filtered
                     # Messages were present but not targeted at this waiter.
                     # Move the local cursor forward to avoid polling the same
@@ -857,6 +858,7 @@ async def handle_msg_wait(db, arguments: dict[str, Any]) -> list[types.Content]:
                     # No for_agent filter: any message wakes this waiter.
                     if agent_id:
                         await crud.thread_wait_exit(db, thread_id, agent_id)
+                        await crud.agent_msg_received(db, agent_id)
                     return msgs
 
             now = asyncio.get_event_loop().time()
