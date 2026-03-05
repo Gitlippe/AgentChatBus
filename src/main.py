@@ -487,6 +487,7 @@ async def _admin_coordinator_loop() -> None:
                                 )
                                 takeover_instruction_meta = {
                                     "ui_type": "admin_coordination_takeover_instruction",
+                                    "visibility": "human_only",
                                     "thread_id": thread_id,
                                     "reason": "all_agents_waiting",
                                     "handoff_target": current_admin_id,
@@ -2362,6 +2363,7 @@ async def api_thread_admin_decision(thread_id: str, body: AdminDecisionRequest):
             )
             metadata = {
                 "ui_type": "admin_coordination_takeover_instruction",
+                "visibility": "human_only",
                 "decision": "takeover",
                 "thread_id": thread_id,
                 "source_message_id": body.source_message_id,
