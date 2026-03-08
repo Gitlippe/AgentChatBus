@@ -1764,12 +1764,14 @@ async def api_agent_unregister(body: AgentToken):
 
 
 @app.post("/api/agents/{agent_id}/kick")
-async def api_agent_kick(agent_id: str):
+async def api_agent_kick(agent_id: str, x_admin_token: str | None = Header(default=None)):
     """Force an agent offline: interrupt msg_wait, remove from connections, backdate heartbeat.
     
     This is used to simulate agent crashes or forcibly disconnect misbehaving agents.
-    Does NOT require authentication.
+    Requires ADMIN_TOKEN when configured via AGENTCHATBUS_ADMIN_TOKEN env var.
     """
+    if ADMIN_TOKEN and (not x_admin_token or x_admin_token != ADMIN_TOKEN):
+        raise HTTPException(status_code=403, detail="X-Admin-Token header required for kick endpoint")
     try:
         db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
         agent = await asyncio.wait_for(crud.agent_get(db, agent_id), timeout=DB_TIMEOUT)
