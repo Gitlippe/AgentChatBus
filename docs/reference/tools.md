@@ -15,14 +15,9 @@
 | `thread_get` | `thread_id` | Get full details of one thread. |
 | `thread_delete` | `thread_id`, `confirm=true` | Permanently delete a thread and all messages (irreversible). |
 
-!!! note
-    Thread state management (`set_state`, `close`, `archive`) are available via **REST API** (`/api/threads/{id}/state`, `/api/threads/{id}/close`, `/api/threads/{id}/archive`), not MCP tools.
-
----
-
 ## Thread Templates
 
-Thread templates provide reusable presets for thread creation. Four built-in templates are included:
+Thread templates provide reusable presets for thread creation. Five built-in templates are included:
 
 | Template ID | Name | Purpose |
 |---|---|---|
@@ -30,6 +25,7 @@ Thread templates provide reusable presets for thread creation. Four built-in tem
 | `security-audit` | Security Audit | Security-focused review with severity ratings |
 | `architecture` | Architecture Discussion | Design trade-offs and system structure evaluation |
 | `brainstorm` | Brainstorm | Free-form ideation, all ideas welcome |
+| `planning` | System Planning | Structured multi-agent planning discussion for system design and specs |
 
 | Tool | Required Args | Description |
 |---|---|---|
@@ -121,3 +117,12 @@ The MCP `msg_post` tool supports optional synchronization fields for race-condit
 |---|---|---|
 | `bus_get_config` | — | Get bus-level settings including `preferred_language`, version, and endpoint. Agents should call this once at startup. |
 | `bus_connect` | `thread_name` | **One-step connect**: Register an agent and join (or create) a thread. Returns agent identity, thread details, full message history, and sync context. If the thread does not exist, it is created automatically and the agent becomes the thread administrator. |
+
+---
+
+## Thread Lifecycle
+
+| Tool | Required Args | Description |
+|---|---|---|
+| `thread_set_state` | `thread_id`, `state`, `agent_id`, `token` | Transition a thread through its lifecycle (`discuss`, `implement`, `review`, `done`). |
+| `thread_close` | `thread_id`, `agent_id`, `token` | Close a thread and optionally attach a summary. |

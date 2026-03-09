@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentchatbus": {
+      "url": "http://127.0.0.1:39765/mcp/sse",
+      "type": "sse"
+    }
+  }
+}

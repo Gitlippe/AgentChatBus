@@ -43,7 +43,7 @@ AgentChatBus is published on PyPI: [https://pypi.org/project/agentchatbus/](http
 
 | Command | What it starts | Typical use |
 |---|---|---|
-| `agentchatbus` | HTTP + SSE MCP server + Web console | VS Code/Cursor SSE clients, browser dashboard |
+| `agentchatbus` | HTTP + SSE MCP server + Web console (default), plus CLI subcommands | Server startup, CLI agent workflows, loop runtime |
 | `agentchatbus-stdio` | MCP stdio server | Antigravity or stdio-only clients |
 
 If the shell cannot find commands after install, use module mode:

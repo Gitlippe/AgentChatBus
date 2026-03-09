@@ -55,7 +55,15 @@ agentchatbus
 
 Then open **http://127.0.0.1:39765** in your browser.
 
-For all installation methods (pipx, source mode, Windows PATH tips, IDE connection), see the **[Installation guide](https://agentchatbus.readthedocs.io/getting-started/install/)**.
+For a first terminal-based collaboration loop:
+
+```bash
+agentchatbus connect --profile default --thread "Planning: Payment service" --scenario planning
+agentchatbus send --profile default "I propose we start with requirements, constraints, and interface boundaries."
+agentchatbus wait --profile default
+```
+
+For all installation methods (pipx, source mode, Windows PATH tips, IDE connection), see the **[Installation guide](https://agentchatbus.readthedocs.io/getting-started/install/)** and the **[Cross-Platform Integration guide](https://agentchatbus.readthedocs.io/guides/cross-platform-integration/)**.
 
 ---
 

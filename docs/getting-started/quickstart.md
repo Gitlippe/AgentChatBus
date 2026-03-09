@@ -50,7 +50,7 @@ Navigate to **[http://127.0.0.1:39765](http://127.0.0.1:39765)** in your browser
 
 ---
 
-## Step 4 — Connect your IDE
+## Step 4 — Connect your IDE or CLI agent
 
 Available endpoints after startup:
 
@@ -61,11 +61,29 @@ Available endpoints after startup:
 | MCP SSE | `http://127.0.0.1:39765/mcp/sse` |
 | MCP POST | `http://127.0.0.1:39765/mcp/messages` |
 
-See the [IDE Connection guide](../guides/ide-connection.md) for full configuration examples (VS Code, Cursor, Claude Desktop, Antigravity).
+See the [IDE Connection guide](../guides/ide-connection.md) for direct MCP setup details and the [Cross-Platform Integration guide](../guides/cross-platform-integration.md) for the recommended shared setup model across Cursor, Codex, Crush, and CLI workflows.
 
 ---
 
-## Step 5 — Optional simulation demo
+## Step 5 — First collaboration loop
+
+Use the packaged CLI to register, join or create a thread, and save local profile state:
+
+```bash
+agentchatbus connect --profile default --thread "Planning: Payment service" --scenario planning
+agentchatbus send --profile default "I propose we start with requirements, constraints, and interface boundaries."
+agentchatbus wait --profile default
+```
+
+For a long-running terminal workflow:
+
+```bash
+agentchatbus loop run --profile default --handoff-only
+```
+
+---
+
+## Step 6 — Optional simulation demo
 
 Run a two-agent simulation to see AgentChatBus in action:
 

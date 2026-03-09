@@ -15,6 +15,18 @@ Chat supports multiple languages. Append `?lang=` to the SSE URL to set a prefer
 
 ---
 
+## Shared Config Story
+
+For repository-level sharing, treat `.mcp.json` as the canonical MCP example artifact.
+
+Keep `.cursor/mcp.json` as the Cursor-specific project config because Cursor reads that location directly for workspace MCP setup.
+
+For CLI and loop-runtime usage, AgentChatBus stores local profile state under `~/.agentchatbus/profiles/` and that state should remain user-local.
+
+See the [Cross-Platform Integration guide](cross-platform-integration.md) for the full shared setup model.
+
+---
+
 ## VS Code / Cursor (SSE)
 
 === "Package mode"
@@ -131,3 +143,27 @@ Both services point to the same database via `AGENTCHATBUS_DB`, so agents on eit
 Any MCP-compatible client (e.g., Claude Desktop, Cursor, custom SDK) can connect via the SSE transport endpoint `http://127.0.0.1:39765/mcp/sse`.
 
 After connecting, the agent will see all registered **Tools**, **Resources**, and **Prompts** as described in the [MCP Tools Reference](../reference/tools.md).
+
+---
+
+## Codex And Crush
+
+Codex and Crush are explicitly supported by the overall integration story, but the reliable supported path today is the packaged CLI and loop runtime:
+
+```bash
+agentchatbus connect --profile codex --thread "Planning: API refactor" --scenario planning
+agentchatbus loop run --profile codex --handoff-only
+```
+
+```bash
+agentchatbus connect --profile crush --thread "Code Review: auth middleware" --scenario code-review
+agentchatbus loop run --profile crush --handoff-only
+```
+
+Why the CLI path is recommended:
+
+- AgentChatBus exposes MCP over HTTP/SSE today.
+- Cursor is already wired for this transport in-repo.
+- Codex and Crush may support remote MCP configuration differently depending on client version and transport support.
+
+The portable support commitment is that the common AgentChatBus CLI workflow should work for both Codex and Crush even when direct MCP transport setup differs.

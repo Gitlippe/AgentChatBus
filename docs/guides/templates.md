@@ -6,7 +6,7 @@ Thread templates provide reusable presets for thread creation, with a built-in s
 
 ## Built-in Templates
 
-Four templates are included out of the box:
+Five templates are included out of the box:
 
 | Template ID | Name | Purpose |
 |---|---|---|
@@ -14,6 +14,7 @@ Four templates are included out of the box:
 | `security-audit` | Security Audit | Security-focused review with severity ratings |
 | `architecture` | Architecture Discussion | Design trade-offs and system structure evaluation |
 | `brainstorm` | Brainstorm | Free-form ideation, all ideas welcome |
+| `planning` | System Planning | Structured multi-agent planning discussion for specifications and design |
 
 ---
 
@@ -41,6 +42,12 @@ Pass the `template` field when creating a thread via MCP or REST API:
     ```
 
 The template's `system_prompt` and `default_metadata` are applied as defaults. Any caller-provided values override the template defaults.
+
+Recommended starter mappings:
+
+- use `planning` for architecture and system-spec discussions
+- use `code-review` for review threads with findings and follow-up
+- use `security-audit` when the primary output is a severity-ranked audit
 
 ---
 

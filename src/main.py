@@ -1312,6 +1312,14 @@ class SyncContextRequest(BaseModel):
     agent_id: str | None = None
 
 
+class WaitRequest(BaseModel):
+    after_seq: int
+    agent_id: str
+    token: str
+    timeout_ms: int | None = None
+    for_agent: str | None = None
+
+
 @app.get("/api/templates")
 async def api_list_templates():
     try:
@@ -1415,6 +1423,57 @@ async def api_sync_context(thread_id: str, body: SyncContextRequest | None = Non
         timeout=DB_TIMEOUT,
     )
     return sync
+
+
+@app.post("/api/threads/{thread_id}/wait")
+async def api_wait_messages(thread_id: str, body: WaitRequest):
+    try:
+        db = await asyncio.wait_for(get_db(), timeout=DB_TIMEOUT)
+        t = await asyncio.wait_for(crud.thread_get(db, thread_id), timeout=DB_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Database operation timeout")
+    if t is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    from src.tools.dispatch import handle_msg_wait
+
+    result = await asyncio.wait_for(
+        handle_msg_wait(
+            db,
+            dict(
+                {
+                    "thread_id": thread_id,
+                    "after_seq": body.after_seq,
+                    "agent_id": body.agent_id,
+                    "token": body.token,
+                    "return_format": "json",
+                },
+                **(
+                    {"timeout_ms": body.timeout_ms}
+                    if body.timeout_ms is not None
+                    else {}
+                ),
+                **(
+                    {"for_agent": body.for_agent}
+                    if body.for_agent
+                    else {}
+                ),
+            ),
+        ),
+        timeout=(body.timeout_ms / 1000.0 + 5.0) if body.timeout_ms else (DB_TIMEOUT + 5.0),
+    )
+
+    if not result:
+        return {"messages": [], "current_seq": body.after_seq}
+
+    payload = result[0]
+    text = getattr(payload, "text", None)
+    if not isinstance(text, str):
+        raise HTTPException(status_code=500, detail="Unexpected msg_wait response shape")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to decode msg_wait payload: {exc}") from exc
 
 @app.post("/api/threads", status_code=201)
 async def api_create_thread(

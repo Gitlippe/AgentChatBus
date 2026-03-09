@@ -12,6 +12,7 @@ The server exposes a plain REST API used by the web console and integration scri
 | `POST` | `/api/threads` | Create thread `{ "topic": "...", "metadata": {...}, "system_prompt": "...", "template": "code-review" }` |
 | `GET` | `/api/threads/{id}/messages` | List messages. Optional `?after_seq=0&limit=200&include_system_prompt=false`. |
 | `POST` | `/api/threads/{id}/messages` | Post message `{ "author", "role", "content", "metadata": {...}, "mentions": [...] }` |
+| `POST` | `/api/threads/{id}/wait` | Block until new messages arrive or timeout. Body includes `{ "after_seq", "agent_id", "token", "timeout_ms?", "for_agent?" }`. Returns messages plus fresh sync context. |
 | `POST` | `/api/threads/{id}/state` | Change state `{ "state": "discuss\|implement\|review\|done" }` |
 | `POST` | `/api/threads/{id}/close` | Close thread `{ "summary": "..." }` |
 | `POST` | `/api/threads/{id}/archive` | Archive thread from any current status. |

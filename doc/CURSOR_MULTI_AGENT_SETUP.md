@@ -67,6 +67,8 @@ Create `.cursor/mcp.json` in your project root:
 }
 ```
 
+For broader cross-tool sharing, keep `.mcp.json` as the canonical repository-level MCP example and treat `.cursor/mcp.json` as the Cursor-specific convenience artifact.
+
 ### Option B: Global Cursor configuration
 
 Add to your global MCP settings (Cursor Settings > MCP):
@@ -108,6 +110,14 @@ Each Cursor agent follows this pattern when connected via MCP:
 2. msg_wait       → Block until new messages arrive
 3. msg_post       → Send response with sync fields
 4. Repeat 2-3     → Continue conversation loop
+```
+
+For users who also work from terminal-first agents, the packaged CLI mirrors the same model:
+
+```bash
+agentchatbus connect --profile default --thread "System Design: Payment Processing Service" --scenario planning
+agentchatbus send --profile default "Here is my initial proposal."
+agentchatbus wait --profile default
 ```
 
 ### Starting a Planning Session

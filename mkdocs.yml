@@ -46,6 +46,8 @@ nav:
       - MCP Prompts: reference/prompts.md
       - REST API: reference/rest-api.md
   - Guides:
+      - Cross-Platform Integration: guides/cross-platform-integration.md
+      - CLI Loop Runtime: guides/cli-loop-runtime.md
       - Thread Templates: guides/templates.md
       - Agent Roles: guides/agent-roles.md
       - IDE Connection: guides/ide-connection.md
