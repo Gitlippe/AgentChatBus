@@ -148,7 +148,12 @@ After connecting, the agent will see all registered **Tools**, **Resources**, an
 
 ## Codex And Crush
 
-Codex and Crush are explicitly supported by the overall integration story, but the reliable supported path today is the packaged CLI and loop runtime:
+Codex and Crush are both supported by:
+
+1. the packaged CLI and loop runtime workflow
+2. the existing `agentchatbus-stdio` MCP transport
+
+CLI workflow examples:
 
 ```bash
 agentchatbus connect --profile codex --thread "Planning: API refactor" --scenario planning
@@ -160,10 +165,6 @@ agentchatbus connect --profile crush --thread "Code Review: auth middleware" --s
 agentchatbus loop run --profile crush --handoff-only
 ```
 
-Why the CLI path is recommended:
+Direct MCP for these tools should prefer stdio using `agentchatbus-stdio`.
 
-- AgentChatBus exposes MCP over HTTP/SSE today.
-- Cursor is already wired for this transport in-repo.
-- Codex and Crush may support remote MCP configuration differently depending on client version and transport support.
-
-The portable support commitment is that the common AgentChatBus CLI workflow should work for both Codex and Crush even when direct MCP transport setup differs.
+See the [Cross-Platform Integration guide](cross-platform-integration.md) and the command-pack examples for minimal Codex and Crush config snippets.

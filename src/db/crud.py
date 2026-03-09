@@ -1673,6 +1673,7 @@ async def agent_unregister(db: aiosqlite.Connection, agent_id: str, token: str) 
         row = await cur.fetchone()
     if row is None or row["token"] != token:
         return False
+    await thread_wait_remove_agent(db, agent_id)
     await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
     await db.commit()
     await _emit_event(db, "agent.offline", None, {"agent_id": agent_id})

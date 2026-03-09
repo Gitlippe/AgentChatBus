@@ -164,6 +164,13 @@ def _format_messages(messages: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _emit_loop_event(args: argparse.Namespace, event: str, **fields: Any) -> None:
+    if not getattr(args, "log_json", False):
+        return
+    payload = {"event": event, **fields}
+    print(json.dumps(payload, sort_keys=True))
+
+
 def _cmd_connect(args: argparse.Namespace) -> None:
     state = _load_state_from_args(args)
     client = _client_for_state(state)
@@ -282,6 +289,23 @@ def _cmd_health(args: argparse.Namespace) -> None:
     _command_output(args, payload)
 
 
+def _cmd_unregister(args: argparse.Namespace) -> None:
+    state = _load_state_from_args(args)
+    _require_agent(state)
+    payload = _client_for_state(state).unregister(agent_id=state.agent_id, token=state.token)
+    state.last_reply_token = None
+    save_profile(state)
+    _command_output(
+        args,
+        {
+            "profile": state.profile,
+            "agent_id": state.agent_id,
+            "endpoint": state.endpoint,
+            "ok": payload.get("ok", False),
+        },
+    )
+
+
 def _cmd_send(args: argparse.Namespace) -> None:
     state = _load_state_from_args(args)
     _require_agent(state)
@@ -386,6 +410,14 @@ def _cmd_loop_run(args: argparse.Namespace) -> None:
     backoff_s = 1.0
     while True:
         try:
+            _emit_loop_event(
+                args,
+                "wait_start",
+                profile=state.profile,
+                thread_id=thread_id,
+                after_seq=state.last_seq,
+                timeout_ms=args.timeout_ms,
+            )
             payload = client.wait_messages(
                 thread_id=thread_id,
                 after_seq=state.last_seq,
@@ -400,6 +432,14 @@ def _cmd_loop_run(args: argparse.Namespace) -> None:
 
             messages = payload.get("messages", [])
             if messages:
+                _emit_loop_event(
+                    args,
+                    "messages_received",
+                    profile=state.profile,
+                    thread_id=thread_id,
+                    count=len(messages),
+                    current_seq=state.last_seq,
+                )
                 if args.json:
                     _print_json(payload)
                 else:
@@ -420,8 +460,23 @@ def _cmd_loop_run(args: argparse.Namespace) -> None:
                         state.last_seq = int(result.get("seq", state.last_seq))
                         state.last_reply_token = None
                         save_profile(state)
+                        _emit_loop_event(
+                            args,
+                            "reply_posted",
+                            profile=state.profile,
+                            thread_id=thread_id,
+                            seq=state.last_seq,
+                        )
                         if not args.json:
                             print(f"[loop] posted seq {state.last_seq}")
+            else:
+                _emit_loop_event(
+                    args,
+                    "wait_timeout",
+                    profile=state.profile,
+                    thread_id=thread_id,
+                    current_seq=state.last_seq,
+                )
 
             if args.once:
                 return
@@ -430,11 +485,20 @@ def _cmd_loop_run(args: argparse.Namespace) -> None:
         except KeyboardInterrupt:
             if args.unregister_on_exit:
                 try:
+                    _emit_loop_event(args, "unregister_on_exit", profile=state.profile, thread_id=thread_id)
                     client.unregister(agent_id=state.agent_id, token=state.token)
                 except BusClientError as exc:
                     print(f"Failed to unregister on exit: {exc}", file=sys.stderr)
             return
         except BusClientError as exc:
+            _emit_loop_event(
+                args,
+                "loop_error",
+                profile=state.profile,
+                thread_id=thread_id,
+                error=str(exc),
+                retry_in_seconds=backoff_s,
+            )
             print(f"[loop] {exc}", file=sys.stderr)
             time.sleep(backoff_s)
             backoff_s = min(backoff_s * 2.0, 10.0)
@@ -489,6 +553,12 @@ def _build_parser() -> argparse.ArgumentParser:
     health.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     health.set_defaults(func=_cmd_health)
 
+    unregister = subparsers.add_parser("unregister", help="Gracefully unregister the saved agent profile")
+    unregister.add_argument("--profile", default="default", help="Local profile name")
+    unregister.add_argument("--endpoint", help="Override the saved base URL")
+    unregister.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    unregister.set_defaults(func=_cmd_unregister)
+
     send = subparsers.add_parser("send", help="Post a message using the saved profile")
     send.add_argument("--profile", default="default", help="Local profile name")
     send.add_argument("--endpoint", help="Override the saved base URL")
@@ -527,6 +597,7 @@ def _build_parser() -> argparse.ArgumentParser:
     loop_run.add_argument("--once", action="store_true", help="Process at most one wait cycle")
     loop_run.add_argument("--unregister-on-exit", action="store_true", help="Gracefully unregister when the loop exits")
     loop_run.add_argument("--json", action="store_true", help="Output machine-readable JSON")
+    loop_run.add_argument("--log-json", action="store_true", help="Emit structured loop events as JSON lines")
     loop_run.set_defaults(func=_cmd_loop_run)
 
     loop_clear = loop_subparsers.add_parser("clear-state", help="Delete the saved local state for a profile")

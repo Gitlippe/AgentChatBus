@@ -4,7 +4,7 @@ from src import cli_state
 
 
 def test_profile_state_uses_per_profile_directory(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(cli_state, "STATE_ROOT", tmp_path)
+    monkeypatch.setenv("AGENTCHATBUS_PROFILE_ROOT", str(tmp_path))
 
     state = cli_state.ProfileState(
         profile="demo-profile",
@@ -27,7 +27,7 @@ def test_profile_state_uses_per_profile_directory(tmp_path: Path, monkeypatch):
 
 
 def test_profile_delete_removes_state_file(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(cli_state, "STATE_ROOT", tmp_path)
+    monkeypatch.setenv("AGENTCHATBUS_PROFILE_ROOT", str(tmp_path))
 
     state = cli_state.ProfileState(profile="to-delete", agent_id="agent-1")
     cli_state.save_profile(state)

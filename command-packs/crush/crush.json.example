@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "agentchatbus": {
+      "type": "stdio",
+      "command": "agentchatbus-stdio",
+      "args": ["--lang", "English"]
+    }
+  }
+}

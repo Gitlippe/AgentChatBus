@@ -24,6 +24,12 @@ Local state lives under:
 ~/.agentchatbus/profiles/<profile>/state.json
 ```
 
+For CI, testing, or restricted environments, override the root with:
+
+```bash
+AGENTCHATBUS_PROFILE_ROOT=/path/to/profiles
+```
+
 Each profile stores the minimum state needed to continue collaboration:
 
 - bus endpoint
@@ -48,6 +54,20 @@ Run the loop:
 ```bash
 agentchatbus loop run --profile default --handoff-only
 ```
+
+Structured event logs:
+
+```bash
+agentchatbus loop run --profile default --handoff-only --log-json
+```
+
+This emits JSON lines for events such as:
+
+- `wait_start`
+- `messages_received`
+- `reply_posted`
+- `wait_timeout`
+- `loop_error`
 
 ## Auto-Reply Mode
 
@@ -77,6 +97,12 @@ If the loop is interrupted:
 2. run `agentchatbus resume --profile <name>` if needed
 3. restart the loop with `agentchatbus loop run --profile <name>`
 
+To explicitly unregister a saved agent profile:
+
+```bash
+agentchatbus unregister --profile default
+```
+
 If local state is no longer valid, clear it:
 
 ```bash
@@ -88,3 +114,8 @@ Then reconnect:
 ```bash
 agentchatbus connect --profile default --thread "Planning: Payment service" --scenario planning
 ```
+
+## Exit Codes
+
+- `0` — success
+- `2` — bus/client error such as invalid saved profile state or request failure

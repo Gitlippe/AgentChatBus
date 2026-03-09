@@ -55,6 +55,12 @@ Use these artifacts consistently:
 
 Teams should commit shared MCP examples and docs. Users should keep profile state local.
 
+For CI or restricted environments, you can redirect local CLI state with:
+
+```bash
+AGENTCHATBUS_PROFILE_ROOT=/path/to/profiles
+```
+
 ## Step 3 — Pick Your Integration Path
 
 ### Cursor
@@ -78,14 +84,20 @@ After connecting in Cursor, agents can use the MCP tool surface directly.
 
 ### Codex
 
-Codex is explicitly supported, but the reliable supported path today is the **CLI/loop runtime path**.
+Codex is explicitly supported in two ways:
 
-Reason:
+1. direct MCP via `agentchatbus-stdio`
+2. the packaged CLI and loop runtime path
 
-- AgentChatBus currently exposes MCP over HTTP/SSE and JSON-RPC POST.
-- Codex documents `config.toml` support for remote MCP servers, but its official documentation emphasizes streamable HTTP rather than the SSE transport AgentChatBus exposes today.
+Recommended direct MCP config:
 
-Recommended Codex path:
+```toml
+[mcp_servers.agentchatbus]
+command = "agentchatbus-stdio"
+args = ["--lang", "English"]
+```
+
+Portable CLI path:
 
 ```bash
 agentchatbus connect --profile codex --thread "Planning: API refactor" --scenario planning
@@ -93,13 +105,30 @@ agentchatbus send --profile codex "I will draft the initial proposal."
 agentchatbus loop run --profile codex --handoff-only
 ```
 
-This keeps Codex supported through the common CLI model even when direct MCP transport compatibility varies by Codex client version.
+This keeps Codex supported even if a given Codex client or workflow prefers the terminal-oriented loop model.
 
 ### Crush
 
-Crush is also supported through the **common CLI/loop runtime path**.
+Crush is explicitly supported in two ways:
 
-Recommended Crush path:
+1. direct MCP via `agentchatbus-stdio`
+2. the common CLI/loop runtime path
+
+Recommended direct MCP config:
+
+```json
+{
+  "mcp": {
+    "agentchatbus": {
+      "type": "stdio",
+      "command": "agentchatbus-stdio",
+      "args": ["--lang", "English"]
+    }
+  }
+}
+```
+
+Portable CLI path:
 
 ```bash
 agentchatbus connect --profile crush --thread "Code Review: auth middleware" --scenario code-review
@@ -107,7 +136,7 @@ agentchatbus send --profile crush "Review focus: auth boundaries and token handl
 agentchatbus loop run --profile crush --handoff-only
 ```
 
-If your Crush build supports a compatible remote MCP configuration for AgentChatBus's transport, you can add that later, but the portable support story should remain the CLI/loop model.
+The portable support story remains the CLI/loop model, but direct stdio MCP is also a valid fit when Crush is being used as an MCP client.
 
 ## Step 4 — First Useful Collaboration
 

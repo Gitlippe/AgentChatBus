@@ -1,6 +1,13 @@
 # Crush
 
-Crush is explicitly supported through the same portable AgentChatBus CLI and loop runtime workflow used for terminal-first agents.
+Crush is explicitly supported in two ways:
+
+1. direct MCP via the existing `agentchatbus-stdio` transport
+2. the portable AgentChatBus CLI and loop runtime workflow used for terminal-first agents
+
+Example MCP config:
+
+- `crush.json.example`
 
 Recommended path today:
 
@@ -16,4 +23,4 @@ Why this is the recommended path:
 - it validates Crush against the common runtime model rather than a bespoke adapter
 - it keeps the collaboration loop consistent with other supported tools
 
-If your Crush build supports a compatible remote MCP configuration for AgentChatBus's transport, you can add that later without changing the server-side collaboration model.
+If you want direct MCP integration in Crush, start with the stdio example config and point Crush at `agentchatbus-stdio`.
